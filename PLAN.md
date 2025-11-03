@@ -3,9 +3,9 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-02 (Phase 2.1 Complete - Core types implemented!)
-**Current Phase**: Phase 2 - Core Data Structures
-**Status**: In Progress (Phase 2.1 Complete)
+**Last Updated**: 2025-11-02 (Phase 2 Complete - Core Data Structures finished!)
+**Current Phase**: Phase 3 - Expression Parser & Evaluator
+**Status**: Ready to Start
 
 ---
 
@@ -98,14 +98,24 @@ File: `src/types.rs`
 - TransactionStats and ThreadState structures
 - 16 comprehensive unit tests covering all type operations
 
-### 2.2 Utility Functions 🔲
+### 2.2 Utility Functions ✅
 File: `src/utils.rs`
 
-- [ ] Port string utilities
-- [ ] Add time formatting helpers
-- [ ] Implement username detection (whoami crate)
-- [ ] Add file I/O utilities
-- [ ] Test edge cases
+- [x] Port string utilities
+- [x] Add time formatting helpers
+- [x] Implement username detection (whoami crate)
+- [x] Add file I/O utilities
+- [x] Test edge cases
+
+**Completed Features:**
+- Enhanced parse_int64/parse_double with proper error detection (overflow vs invalid syntax)
+- Variable name validation: is_valid_variable_name()
+- String utilities: normalize_whitespace(), is_integer_string()
+- Time/stats formatting: format_duration(), format_tps(), format_latency()
+- Percentile calculation: calculate_percentile() for latency statistics
+- File I/O: read_file_to_string(), file_exists(), get_file_size()
+- Range validation: check_range_i64(), check_range_f64()
+- 16 comprehensive unit tests with edge cases
 
 ---
 
@@ -428,23 +438,23 @@ File: `tests/compatibility_test.rs`
 
 ## Immediate Next Steps
 
-1. **Start Phase 2.1**: Define core types (HIGH PRIORITY)
-   - Implement in `src/types.rs`
-   - Reference `pgbench.h` and `pgbench.c` for type definitions
-   - Focus on PgBenchValue, PgBenchExpr, and Command types
-   - Add comprehensive unit tests
-
-2. **Complete Phase 2.2**: Utility functions
-   - Enhance `src/utils.rs` with string utilities
-   - Add time formatting helpers
-   - Implement file I/O utilities
-   - Test edge cases
-
-3. **Start Phase 3.1**: Choose expression parser
+1. **Start Phase 3.1**: Choose expression parser (CRITICAL - HIGH PRIORITY)
    - Evaluate pest vs nom vs lalrpop
-   - Create proof-of-concept for each
+   - Create proof-of-concept for expression grammar
    - Make decision and document in ARCHITECTURE.md
-   - Implement chosen parser
+   - Port expression grammar from original-source/exprparse.y
+
+2. **Complete Phase 3.2**: Implement expression grammar
+   - Port full grammar from Bison/Flex to chosen parser
+   - Support all operators and functions
+   - Handle operator precedence correctly
+   - Add comprehensive parser tests
+
+3. **Complete Phase 3.3**: Expression evaluator
+   - Implement EvalContext for variable bindings
+   - Implement all arithmetic/logical/bitwise operations
+   - Implement all built-in functions
+   - Add evaluation tests
 
 ---
 
@@ -457,7 +467,7 @@ File: `tests/compatibility_test.rs`
 
 ### Phase Summary
 - Phase 1: ✅ 100% complete (Foundation complete!)
-- Phase 2: 🔲 Not started
+- Phase 2: ✅ 100% complete (Core Data Structures complete!)
 - Phase 3: 🔲 Not started
 - Phase 4: 🔲 Not started
 - Phase 5: 🔲 Not started
@@ -467,11 +477,27 @@ File: `tests/compatibility_test.rs`
 - Phase 9: 🔲 Not started
 - Phase 10: 🔲 Not started
 
-### Overall Progress: ~10%
+### Overall Progress: ~12%
 
 ---
 
 ## Notes & Decisions
+
+### 2025-11-02 (Update 5 - Phase 2 Complete!)
+- **Utility Functions (Phase 2.2) completed**:
+  - Enhanced parse_int64() and parse_double() with proper error detection
+  - Added is_valid_variable_name() for validating variable names
+  - String utilities: normalize_whitespace(), is_integer_string()
+  - Time/stats formatting: format_duration(), format_tps(), format_latency()
+  - Percentile calculation for latency statistics
+  - File I/O utilities: read_file_to_string(), file_exists(), get_file_size()
+  - Range validation helpers: check_range_i64(), check_range_f64()
+  - 16 comprehensive unit tests (100% pass rate)
+- **Phase 2 Complete!** 🎉
+  - Phase 2.1: Core type definitions with full coercion system
+  - Phase 2.2: Comprehensive utility functions
+  - All 55 tests passing
+- Next: Phase 3.1 (Choose expression parser) - CRITICAL PATH
 
 ### 2025-11-02 (Update 4 - Phase 2.1 Complete!)
 - **Core Type Definitions (Phase 2.1) completed**:
