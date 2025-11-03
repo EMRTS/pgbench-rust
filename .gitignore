@@ -1,0 +1,37 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (uncomment if this is a library)
+# Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test outputs
+*.log
+test_results/
+
+# Benchmark outputs
+bench_results/
+
+# Generated parser files (if using lalrpop)
+src/expr/grammar.rs
+
+# Documentation build
+/doc/
+
+# Coverage reports
+*.profraw
+*.profdata
+lcov.info
+coverage/

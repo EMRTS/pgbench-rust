@@ -1,0 +1,95 @@
+[package]
+name = "pgbench-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A port of PostgreSQL's pgbench benchmarking tool to Rust"
+license = "PostgreSQL"
+repository = "https://github.com/yourusername/pgbench-rust"
+readme = "README.md"
+keywords = ["postgresql", "benchmark", "database", "performance"]
+categories = ["command-line-utilities", "database"]
+
+[dependencies]
+# Database connectivity - PostgreSQL client
+postgres = "0.19"
+# Alternative: tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+
+# Command-line interface
+clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
+
+# Random number generation
+rand = { version = "0.8", features = ["small_rng"] }
+rand_distr = "0.4"  # For Gaussian, Exponential distributions
+
+# Logging infrastructure
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Expression parser - choose one of these:
+# Option 1: PEG parser (recommended for maintainability)
+pest = { version = "2.7", optional = true }
+pest_derive = { version = "2.7", optional = true }
+
+# Option 2: Parser combinators (uncomment if preferred)
+# nom = "7.1"
+
+# Option 3: LALR parser generator (uncomment if preferred)
+# lalrpop-util = { version = "0.20", features = ["lexer"] }
+
+# Cross-platform utilities
+ctrlc = { version = "3.4", features = ["termination"] }  # Ctrl+C handling
+whoami = "1.5"  # Username detection
+
+# Date/time utilities
+chrono = "0.4"  # For timestamps and time formatting
+
+# Additional utilities
+libc = "0.2"  # For platform-specific low-level operations
+num-traits = "0.2"  # Numeric traits for generic math
+lazy_static = "1.5"  # For global static initialization
+
+[dev-dependencies]
+# Testing utilities
+assert_cmd = "2.0"  # For CLI testing
+predicates = "3.1"  # For test assertions
+tempfile = "3.10"  # For temporary test files
+criterion = "0.5"  # For benchmarking the benchmarker!
+proptest = "1.4"  # Property-based testing for RNG
+
+[build-dependencies]
+# Uncomment if using lalrpop
+# lalrpop = "0.20"
+
+[[bin]]
+name = "pgbench"
+path = "src/main.rs"
+
+[profile.release]
+# Optimize for speed - this is a benchmarking tool!
+opt-level = 3
+lto = true  # Link-time optimization
+codegen-units = 1  # Better optimization at cost of compile time
+strip = true  # Strip symbols for smaller binary
+
+[profile.dev]
+# Fast compilation for development
+opt-level = 0
+
+[features]
+default = ["parser-pest"]
+
+# Parser implementation features (enable only one)
+parser-pest = ["pest", "pest_derive"]
+
+# Optional features
+async-postgres = []  # Use tokio-postgres instead of postgres
+tracing = []  # Use tracing instead of log (future enhancement)
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
