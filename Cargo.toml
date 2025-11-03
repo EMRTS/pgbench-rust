@@ -30,16 +30,14 @@ env_logger = "0.11"
 anyhow = "1.0"
 thiserror = "1.0"
 
-# Expression parser - choose one of these:
-# Option 1: PEG parser (recommended for maintainability)
-pest = { version = "2.7", optional = true }
-pest_derive = { version = "2.7", optional = true }
+# Expression parser - LALRPOP chosen for Bison compatibility (see ARCHITECTURE.md)
+lalrpop-util = { version = "0.20", features = ["lexer"] }
+regex = "1.10"  # Required by lalrpop lexer
 
-# Option 2: Parser combinators (uncomment if preferred)
+# Alternative parsers (not used, kept for reference):
+# pest = { version = "2.7", optional = true }
+# pest_derive = { version = "2.7", optional = true }
 # nom = "7.1"
-
-# Option 3: LALR parser generator (uncomment if preferred)
-# lalrpop-util = { version = "0.20", features = ["lexer"] }
 
 # Cross-platform utilities
 ctrlc = { version = "3.4", features = ["termination"] }  # Ctrl+C handling
@@ -62,8 +60,7 @@ criterion = "0.5"  # For benchmarking the benchmarker!
 proptest = "1.4"  # Property-based testing for RNG
 
 [build-dependencies]
-# Uncomment if using lalrpop
-# lalrpop = "0.20"
+lalrpop = "0.20"
 
 [[bin]]
 name = "pgbench"
@@ -81,10 +78,7 @@ strip = true  # Strip symbols for smaller binary
 opt-level = 0
 
 [features]
-default = ["parser-pest"]
-
-# Parser implementation features (enable only one)
-parser-pest = ["pest", "pest_derive"]
+default = []
 
 # Optional features
 async-postgres = []  # Use tokio-postgres instead of postgres

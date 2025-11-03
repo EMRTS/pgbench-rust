@@ -138,9 +138,88 @@ CREATE TABLE pgbench_history (
 - `EvalContext`: Variable bindings and state
 
 **Design Decisions**:
-- Use `pest` PEG parser for maintainability (can switch to `nom` if performance critical)
+- **Parser Choice: lalrpop** (LALR parser generator, see detailed evaluation below)
 - Separate parsing from evaluation (classic two-phase approach)
 - Support all original pgbench expression features
+
+#### Parser Implementation Choice (Phase 3.1 - DECISION)
+
+**Date**: 2025-11-02
+**Decision**: Use **lalrpop** for expression parsing
+
+**Requirements Analysis** (from original-source/exprparse.y and exprscan.l):
+- 40+ operators and functions
+- 8 precedence levels (matching PostgreSQL SQL parser)
+- Arithmetic: +, -, *, /, %
+- Comparison: <, <=, >, >=, =, <>, !=
+- Logical: AND, OR, NOT
+- Bitwise: &, |, #, ~, <<, >>
+- IS operators: IS NULL, IS NOT NULL, IS TRUE, IS FALSE
+- CASE WHEN ... THEN ... ELSE ... END
+- Function calls with variable arguments
+- Variables: :varname
+- Constants: integers, doubles, booleans, NULL
+
+**Options Evaluated**:
+
+1. **pest** (PEG Parser)
+   - Pros:
+     - Declarative grammar in separate .pest file
+     - Good error messages with location info
+     - Easy to read and maintain
+     - Popular in Rust ecosystem
+   - Cons:
+     - PEG parsers can be slower than LALR
+     - Operator precedence requires manual precedence climbing
+     - Grammar structure differs from Bison (harder to port)
+   - Verdict: Good for greenfield projects, but adds complexity for Bison port
+
+2. **nom** (Parser Combinators)
+   - Pros:
+     - Excellent performance (zero-copy parsing)
+     - Very flexible and composable
+     - No build-time code generation
+     - Good for binary formats
+   - Cons:
+     - Parser written in Rust code (not declarative)
+     - More verbose than grammar-based parsers
+     - Operator precedence requires manual implementation
+     - Harder to maintain for complex grammars
+   - Verdict: Best for performance-critical parsing, but too much work for this use case
+
+3. **lalrpop** (LALR Parser Generator) ✅ **CHOSEN**
+   - Pros:
+     - LALR(1) parser like Bison (direct port possible)
+     - Operator precedence handled naturally via precedence declarations
+     - Grammar structure closely matches original exprparse.y
+     - Generated code is efficient
+     - Good error messages with line numbers
+     - Battle-tested for expression grammars
+   - Cons:
+     - Less popular than pest/nom
+     - Build-time code generation (longer compile times)
+     - Potential shift/reduce conflicts (but Bison grammar is clean)
+   - Verdict: **Best choice for porting from Bison**
+
+**Rationale**:
+1. **Direct Portability**: Original grammar is in Bison (LALR), lalrpop is also LALR → easiest port
+2. **Precedence Handling**: lalrpop handles operator precedence declarations natively, no manual climbing needed
+3. **Grammar Clarity**: Can structure lalrpop grammar almost identically to exprparse.y
+4. **Performance**: Generated parser is fast enough (parsing is not on critical path during benchmarking)
+5. **Correctness**: Reducing translation complexity reduces bugs
+
+**Trade-offs Accepted**:
+- Build time slightly longer due to code generation (acceptable)
+- Smaller ecosystem than pest (mitigated by stable API)
+- Learning curve for team (mitigated by similarity to Bison)
+
+**Implementation Plan**:
+1. Add lalrpop to build dependencies in Cargo.toml
+2. Create src/expr/grammar.lalrpop with grammar rules
+3. Port precedence levels from exprparse.y (lines 69-78)
+4. Port grammar rules (lines 82-163)
+5. Implement AST construction matching PgBenchExpr types
+6. Add comprehensive parser tests
 
 **Expression Grammar**:
 ```
