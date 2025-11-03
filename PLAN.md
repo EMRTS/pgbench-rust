@@ -3,9 +3,9 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-02 (Phase 2 Complete - Core Data Structures finished!)
+**Last Updated**: 2025-11-02 (Phase 3.1 Complete - Parser implementation chosen!)
 **Current Phase**: Phase 3 - Expression Parser & Evaluator
-**Status**: Ready to Start
+**Status**: Phase 3.1 Complete, Phase 3.2 In Progress
 
 ---
 
@@ -121,30 +121,64 @@ File: `src/utils.rs`
 
 ## Phase 3: Expression Parser & Evaluator
 
-**Status**: Not Started
+**Status**: In Progress (3.1 Complete, 3.2 Starting)
 **Dependencies**: Phase 2 complete
 
-### 3.1 Choose Parser Implementation 🔲
-- [ ] Evaluate pest vs nom vs lalrpop
-- [ ] Create proof-of-concept for chosen approach
-- [ ] Document decision in ARCHITECTURE.md
+### 3.1 Choose Parser Implementation ✅
+**Priority: CRITICAL - COMPLETED**
 
-### 3.2 Expression Grammar 🔲
-File: `src/expr/parser.rs` (and possibly `src/expr/grammar.pest`)
+- [x] Evaluate pest vs nom vs lalrpop
+- [x] Create proof-of-concept for chosen approach
+- [x] Document decision in ARCHITECTURE.md
+
+**Completed Features:**
+- Evaluated three parser options with detailed pros/cons analysis
+- Selected **lalrpop** for best Bison compatibility
+- Documented comprehensive rationale in ARCHITECTURE.md
+- Implemented proof-of-concept grammar covering:
+  - 6-tier operator precedence matching PostgreSQL
+  - Arithmetic: +, -, *, /, %
+  - Comparison: <, <=, >, >=, =, <>
+  - Logical: AND, OR, NOT
+  - Constants: integers, doubles, booleans, NULL
+  - Variables: :varname
+  - Function calls (basic)
+  - Unary operators: +, -
+  - Parentheses for grouping
+- Created build.rs for grammar compilation
+- 11 comprehensive unit tests (100% pass rate)
+
+**Key Decision Points:**
+1. Chose lalrpop over pest/nom for direct Bison→LALR portability
+2. Operator precedence handled natively (no manual climbing)
+3. Grammar structure mirrors original exprparse.y closely
+4. Build-time code generation acceptable for correctness gains
+
+### 3.2 Expression Grammar 🚧
+**Priority: HIGH - In Progress**
+
+File: `src/expr/grammar.lalrpop`, `src/expr/parser.rs`
 
 Reference: `original-source/exprparse.y`, `original-source/exprscan.l`
 
-- [ ] Port expression grammar from Bison
-- [ ] Support literals (integers, doubles, booleans)
-- [ ] Support variables (`:varname`)
-- [ ] Support arithmetic operators (+, -, *, /, %)
-- [ ] Support comparison operators (=, <, >, <=, >=, !=, <>)
-- [ ] Support logical operators (AND, OR, NOT)
+- [x] Port expression grammar from Bison (POC complete)
+- [x] Support literals (integers, doubles, booleans)
+- [x] Support variables (`:varname`)
+- [x] Support arithmetic operators (+, -, *, /, %)
+- [x] Support comparison operators (=, <, >, <=, >=, <>)
+- [x] Support logical operators (AND, OR, NOT)
 - [ ] Support bitwise operators (&, |, #, ~, <<, >>)
-- [ ] Support function calls
-- [ ] Support CASE expressions
-- [ ] Support operator precedence
-- [ ] Add comprehensive parser tests
+- [ ] Support != operator (alias for <>)
+- [ ] Support IS NULL / IS NOT NULL operators
+- [ ] Support IS TRUE / IS FALSE / IS NOT TRUE / IS NOT FALSE
+- [x] Support function calls (basic - needs expansion)
+- [ ] Support CASE WHEN ... THEN ... ELSE ... END expressions
+- [x] Support operator precedence (6 tiers implemented)
+- [x] Add comprehensive parser tests (11 tests, more needed)
+- [ ] Add all built-in function names to lexer
+- [ ] Improve error messages with precise line/column info
+- [ ] Handle PG_INT64_MIN special case (9223372036854775808)
+- [ ] Support scientific notation for doubles
 
 ### 3.3 Expression Evaluator 🔲
 File: `src/expr/eval.rs`
@@ -438,13 +472,15 @@ File: `tests/compatibility_test.rs`
 
 ## Immediate Next Steps
 
-1. **Start Phase 3.1**: Choose expression parser (CRITICAL - HIGH PRIORITY)
-   - Evaluate pest vs nom vs lalrpop
-   - Create proof-of-concept for expression grammar
-   - Make decision and document in ARCHITECTURE.md
-   - Port expression grammar from original-source/exprparse.y
+1. **Complete Phase 3.2**: Implement full expression grammar (HIGH PRIORITY)
+   - Add bitwise operators (&, |, #, ~, <<, >>)
+   - Add IS operators (IS NULL, IS NOT NULL, IS TRUE, IS FALSE)
+   - Implement CASE expressions
+   - Add all 40+ built-in functions to grammar
+   - Expand test coverage (target: 30+ parser tests)
+   - Handle edge cases (INT64_MIN, scientific notation)
 
-2. **Complete Phase 3.2**: Implement expression grammar
+2. **Start Phase 3.3**: Expression evaluator
    - Port full grammar from Bison/Flex to chosen parser
    - Support all operators and functions
    - Handle operator precedence correctly
@@ -468,7 +504,7 @@ File: `tests/compatibility_test.rs`
 ### Phase Summary
 - Phase 1: ✅ 100% complete (Foundation complete!)
 - Phase 2: ✅ 100% complete (Core Data Structures complete!)
-- Phase 3: 🔲 Not started
+- Phase 3: 🚧 25% complete (3.1 ✅, 3.2 partial, 3.3-3.4 pending)
 - Phase 4: 🔲 Not started
 - Phase 5: 🔲 Not started
 - Phase 6: 🔲 Not started
@@ -477,11 +513,27 @@ File: `tests/compatibility_test.rs`
 - Phase 9: 🔲 Not started
 - Phase 10: 🔲 Not started
 
-### Overall Progress: ~12%
+### Overall Progress: ~15%
 
 ---
 
 ## Notes & Decisions
+
+### 2025-11-02 (Update 6 - Phase 3.1 Complete!)
+- **Parser Implementation (Phase 3.1) completed**:
+  - Evaluated three parser options: pest (PEG), nom (combinators), lalrpop (LALR)
+  - **Chose lalrpop** for best Bison compatibility and operator precedence handling
+  - Documented comprehensive decision rationale in ARCHITECTURE.md
+  - Implemented proof-of-concept grammar with 6-tier precedence
+  - Covers arithmetic, comparison, logical operators
+  - Supports integers, doubles, booleans, NULL, variables, functions
+  - 11 unit tests (100% pass rate)
+  - Build system configured with build.rs for grammar compilation
+- **Key Trade-offs:**
+  - Accepted longer build times for correctness and portability
+  - Chose declarative grammar over code-based combinators for maintainability
+  - LALR parser generator most similar to original Bison implementation
+- Next: Phase 3.2 (Complete expression grammar with all operators and CASE)
 
 ### 2025-11-02 (Update 5 - Phase 2 Complete!)
 - **Utility Functions (Phase 2.2) completed**:
