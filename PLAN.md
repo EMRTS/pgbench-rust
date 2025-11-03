@@ -3,9 +3,9 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-02 (Phase 1 Complete - Foundation finished!)
+**Last Updated**: 2025-11-02 (Phase 2.1 Complete - Core types implemented!)
 **Current Phase**: Phase 2 - Core Data Structures
-**Status**: In Progress
+**Status**: In Progress (Phase 2.1 Complete)
 
 ---
 
@@ -72,18 +72,31 @@ File: `src/db/connection.rs`
 
 ## Phase 2: Core Data Structures
 
-### 2.1 Type Definitions 🔲
+### 2.1 Type Definitions ✅
 File: `src/types.rs`
 
-- [ ] Define PgBenchValue enum (int, double, bool, null)
-- [ ] Implement PgBenchValue conversions
-- [ ] Define PgBenchExpr for expression AST
-- [ ] Define PgBenchFunction enum
-- [ ] Define Command enum (SQL vs meta-command)
-- [ ] Define MetaCommand variants
-- [ ] Define TransactionStats struct
-- [ ] Define ThreadState struct
-- [ ] Add unit tests for all types
+- [x] Define PgBenchValue enum (int, double, bool, null)
+- [x] Implement PgBenchValue conversions
+- [x] Define PgBenchExpr for expression AST
+- [x] Define PgBenchFunction enum
+- [x] Define Command enum (SQL vs meta-command)
+- [x] Define MetaCommand variants
+- [x] Define TransactionStats struct
+- [x] Define ThreadState struct
+- [x] Add unit tests for all types
+
+**Completed Features:**
+- PgBenchValue with full type coercion system:
+  - coerce_to_int(), coerce_to_double(), coerce_to_bool()
+  - as_int(), as_double(), as_bool() accessors
+  - type_name() for error messages
+  - Display trait for formatting values
+  - Overflow checking for double→int conversion
+- PgBenchExpr AST with 3 node types (Constant, Variable, Function)
+- PgBenchFunction enum with 30+ operators and functions
+- Command and MetaCommand enums matching C implementation
+- TransactionStats and ThreadState structures
+- 16 comprehensive unit tests covering all type operations
 
 ### 2.2 Utility Functions 🔲
 File: `src/utils.rs`
@@ -459,6 +472,20 @@ File: `tests/compatibility_test.rs`
 ---
 
 ## Notes & Decisions
+
+### 2025-11-02 (Update 4 - Phase 2.1 Complete!)
+- **Core Type Definitions (Phase 2.1) completed**:
+  - Enhanced PgBenchValue with comprehensive type coercion methods
+  - Implemented coerce_to_int(), coerce_to_double(), coerce_to_bool() with proper error handling
+  - Added accessor methods: as_int(), as_double(), as_bool(), type_name()
+  - Overflow checking for double→int conversion matching C behavior
+  - PgBenchExpr AST with 3 node types: Constant, Variable, Function
+  - PgBenchFunction enum with 30+ operators (arithmetic, bitwise, logical, comparison, random, hash)
+  - Command and MetaCommand enums matching original C implementation
+  - TransactionStats and ThreadState structures for benchmark execution
+  - 16 comprehensive unit tests (100% pass rate)
+- All 42 tests passing across all modules
+- Next: Phase 2.2 (Utility Functions) or Phase 3.1 (Expression Parser)
 
 ### 2025-11-02 (Update 3 - Phase 1 Complete!)
 - **Error Handling (Phase 1.3) completed**:
