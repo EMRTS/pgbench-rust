@@ -183,7 +183,7 @@ impl Args {
 
         // Check sampling rate
         if let Some(sampling_rate) = self.sampling_rate {
-            if sampling_rate < 0.0 || sampling_rate > 1.0 {
+            if !(0.0..=1.0).contains(&sampling_rate) {
                 anyhow::bail!("Sampling rate must be between 0.0 and 1.0");
             }
         }
