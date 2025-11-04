@@ -131,17 +131,40 @@ impl PgBenchConnection {
         &mut self.client
     }
 
-    /// Execute a simple query
+    /// Execute a query with parameters
     ///
     /// # Arguments
     /// * `query` - SQL query string
+    /// * `params` - Query parameters
     ///
     /// # Returns
     /// Number of rows affected
-    pub fn execute(&mut self, query: &str) -> PgBenchResult<u64> {
+    pub fn execute(&mut self, query: &str, params: &[&(dyn postgres::types::ToSql + Sync)]) -> PgBenchResult<u64> {
         self.client
-            .execute(query, &[])
+            .execute(query, params)
             .map_err(|e| PgBenchError::QueryError(e.to_string()))
+    }
+
+    /// Start a COPY IN operation
+    ///
+    /// Returns a writer that can be used to stream data to the database.
+    /// The writer must be finished by calling `.finish()` to complete the COPY.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::io::Write;
+    /// # use pgbench::db::connection::PgBenchConnection;
+    /// # let mut conn = PgBenchConnection::connect("postgres://localhost/test")?;
+    /// let mut writer = conn.copy_in("COPY my_table FROM STDIN")?;
+    /// writer.write_all(b"1\t2\t3\n")?;
+    /// writer.finish()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn copy_in(&mut self, query: &str) -> PgBenchResult<CopyWriter> {
+        let writer = self.client
+            .copy_in(query)
+            .map_err(|e| PgBenchError::QueryError(format!("COPY IN failed: {}", e)))?;
+        Ok(CopyWriter { writer })
     }
 
     /// Execute a query and return results
@@ -170,6 +193,30 @@ impl PgBenchConnection {
         let new_conn = Self::connect(&self.connection_string)?;
         self.client = new_conn.client;
         Ok(())
+    }
+}
+
+/// Wrapper for COPY IN writer
+pub struct CopyWriter {
+    writer: postgres::binary_copy::BinaryCopyInWriter,
+}
+
+impl CopyWriter {
+    /// Finish the COPY operation
+    pub fn finish(self) -> PgBenchResult<u64> {
+        self.writer
+            .finish()
+            .map_err(|e| PgBenchError::QueryError(format!("COPY finish failed: {}", e)))
+    }
+}
+
+impl std::io::Write for CopyWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.writer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
     }
 }
 
@@ -223,7 +270,7 @@ mod tests {
     fn test_execute_query() {
         let mut conn = PgBenchConnection::connect("postgres://localhost/postgres")
             .expect("Failed to connect");
-        let result = conn.execute("SELECT 1");
+        let result = conn.execute("SELECT 1", &[]);
         assert!(result.is_ok());
     }
 }
