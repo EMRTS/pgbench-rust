@@ -3,9 +3,9 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-04 (Phase 4.1 Complete - Database initialization implemented!)
-**Current Phase**: Phase 4 - Database Operations
-**Status**: Phase 3 Complete (✅), Phase 4.1 Complete (✅), Phase 4.2 Next
+**Last Updated**: 2025-11-04 (Phase 5.1 Complete - Built-in scripts and parser implemented!)
+**Current Phase**: Phase 5 - Transaction Scripts
+**Status**: Phase 3 Complete (✅), Phase 4.1 Complete (✅), Phase 5.1 & 5.2 Complete (✅), Phase 6 Next
 
 ---
 
@@ -347,30 +347,62 @@ File: `src/db/query.rs`
 **Status**: Not Started
 **Dependencies**: Phase 3, 4.2 complete
 
-### 5.1 Script Parser 🔲
+### 5.1 Script Parser ✅
 File: `src/script/parser.rs`
 
 Reference: `pgbench.c` parseScript function
 
-- [ ] Parse SQL commands
-- [ ] Parse \set meta-command
-- [ ] Parse \sleep meta-command
-- [ ] Parse \if, \elif, \else, \endif meta-commands
-- [ ] Parse \setshell meta-command
-- [ ] Parse \startpipeline, \endpipeline
-- [ ] Handle comments
-- [ ] Handle line continuations
-- [ ] Load script from file
-- [ ] Support multiple scripts (-f flag)
-- [ ] Test script parsing
+- [x] Parse SQL commands
+- [x] Parse \set meta-command
+- [x] Parse \sleep meta-command
+- [x] Parse \if, \elif, \else, \endif meta-commands
+- [x] Parse \setshell meta-command
+- [x] Parse \startpipeline, \endpipeline
+- [x] Handle comments (both -- and /* */ styles)
+- [ ] Handle line continuations (deferred - not needed for built-in scripts)
+- [ ] Load script from file (deferred to Phase 5.3)
+- [ ] Support multiple scripts (-f flag) (deferred to Phase 5.3)
+- [x] Test script parsing (16 comprehensive tests)
 
-### 5.2 Built-in Scripts 🔲
-File: `src/script/mod.rs`
+**Completed Features:**
+- Full meta-command parser supporting all pgbench commands
+- Comment handling (SQL -- and C-style /* */)
+- Expression parsing for \if, \elif, and \set commands
+- Proper error handling with line numbers
+- 16 comprehensive unit tests covering:
+  - Simple SQL parsing
+  - All meta-commands
+  - Mixed SQL and meta-commands
+  - Comment handling
+  - Built-in script parsing
+  - Error cases
+- 448 lines of implementation including tests
 
-- [ ] Implement TPC-B-like (default)
-- [ ] Implement simple-update (-b simple-update)
-- [ ] Implement select-only (-b select-only)
-- [ ] Test built-in scripts
+### 5.2 Built-in Scripts ✅
+File: `src/script/builtin.rs`
+
+- [x] Implement TPC-B-like (default)
+- [x] Implement simple-update (-b simple-update)
+- [x] Implement select-only (-b select-only)
+- [x] Test built-in scripts (14 comprehensive tests)
+
+**Completed Features:**
+- Three built-in scripts matching original pgbench exactly:
+  - TPC-B-like: Full transaction with all 4 tables (default workload)
+  - simple-update: Simplified transaction without tellers/branches updates
+  - select-only: Read-only workload
+- BuiltinScript struct with:
+  - get() - retrieve script by name
+  - all() - get all available scripts
+  - is_builtin() - check if name is built-in
+- Constants matching original: ACCOUNTS_PER_SCALE (100,000), BRANCHES_PER_SCALE (1), TELLERS_PER_SCALE (10)
+- 14 comprehensive unit tests covering:
+  - Script retrieval by name
+  - Script content verification
+  - Variable usage verification
+  - Description verification
+  - Error cases (nonexistent scripts)
+- 278 lines of implementation including tests
 
 ### 5.3 Script Executor 🔲
 File: `src/script/executor.rs`
@@ -732,6 +764,35 @@ File: `tests/compatibility_test.rs`
 - **Operator Precedence**: Fixed from 6 tiers to 9 tiers (now matches PostgreSQL)
 - **Built-in Functions**: 20+ functions (up from 4 in POC)
 - Next: Phase 3.3 (Expression Evaluator) - implement the evaluation logic
+
+### 2025-11-04 (Update 10 - Phase 5.1 & 5.2 Complete!)
+- **Built-in Scripts (Phase 5.2) completed**:
+  - Created `src/script/builtin.rs` with three built-in scripts
+  - TPC-B-like: Full transaction benchmark (default)
+  - simple-update: Simplified transaction without tellers/branches
+  - select-only: Read-only benchmark
+  - BuiltinScript API: get(), all(), is_builtin()
+  - 14 comprehensive unit tests (100% pass rate)
+  - 278 lines including tests
+- **Script Parser (Phase 5.1) completed**:
+  - Completely rewrote `src/script/parser.rs` (448 lines)
+  - Full meta-command parser for all pgbench commands:
+    - \set with expression evaluation
+    - \sleep with unit support (us, ms, s)
+    - \if, \elif, \else, \endif with expression conditions
+    - \setshell for shell command execution
+    - \startpipeline, \endpipeline for pipeline mode
+  - Comment handling (SQL -- and C-style /* */)
+  - SQL statement parsing with proper line tracking
+  - Error handling with line numbers for debugging
+  - 16 comprehensive unit tests covering:
+    - All meta-commands
+    - SQL parsing
+    - Comment stripping
+    - Built-in script parsing
+    - Error cases
+- **Integration**: Updated `src/script/mod.rs` to export built-in scripts
+- Next: Phase 6 (PRNG Implementation) - CRITICAL for random() function support
 
 ### 2025-11-02 (Update 6 - Phase 3.1 Complete!)
 - **Parser Implementation (Phase 3.1) completed**:
