@@ -274,6 +274,25 @@ impl PgBenchError {
         }
     }
 
+    /// Create a division by zero error
+    pub fn division_by_zero() -> Self {
+        Self::DivisionByZero
+    }
+
+    /// Create an invalid operation error
+    pub fn invalid_operation(message: impl Into<String>) -> Self {
+        Self::InvalidOperation {
+            message: message.into(),
+        }
+    }
+
+    /// Create an invalid function arguments error
+    pub fn invalid_function_args(func_name: impl Into<String>, expected: usize, actual: usize) -> Self {
+        Self::ExpressionEvalError(
+            format!("Function {} expects {} arguments, got {}", func_name.into(), expected, actual)
+        )
+    }
+
     /// Check if this error is fatal (should terminate the program)
     pub fn is_fatal(&self) -> bool {
         matches!(
