@@ -6,10 +6,9 @@
 pub mod prng;
 pub mod distributions;
 
-pub use prng::PgBenchRng;
+pub use prng::{PgBenchRng, Xoroshiro128StarStar};
 pub use distributions::*;
 
-// TODO: Implement Xoroshiro128** PRNG for compatibility
 // TODO: Implement uniform distribution
 // TODO: Implement Gaussian distribution
 // TODO: Implement exponential distribution
