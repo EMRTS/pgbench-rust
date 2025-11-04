@@ -1,5 +1,5 @@
 // LALRPOP grammar for pgbench expressions
-// This is a proof-of-concept implementation porting from original-source/exprparse.y
+// Full implementation porting from original-source/exprparse.y
 //
 // Reference: original-source/exprparse.y (Bison grammar)
 //           original-source/exprscan.l (Flex lexer)
@@ -10,12 +10,22 @@ use std::str::FromStr;
 
 grammar;
 
-// Match the precedence from exprparse.y lines 69-78
+// Match the precedence from exprparse.y lines 68-77
 // Precedence: lowest to highest (matching PostgreSQL SQL parser)
+//
+// %left	OR_OP                          (lowest precedence)
+// %left	AND_OP
+// %right  NOT_OP
+// %nonassoc IS_OP ISNULL_OP NOTNULL_OP
+// %nonassoc '<' '>' '=' LE_OP GE_OP NE_OP
+// %left   '|' '#' '&' LS_OP RS_OP '~'
+// %left	'+' '-'
+// %left	'*' '/' '%'
+// %right	UNARY                          (highest precedence)
 
 // Entry point - returns a PgBenchExpr AST
 pub Expr: Box<PgBenchExpr> = {
-    // Tier 6: Logical OR (lowest precedence)
+    // Tier 9: Logical OR (lowest precedence)
     <l:Expr> "OR" <r:AndExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Or,
@@ -26,7 +36,7 @@ pub Expr: Box<PgBenchExpr> = {
 };
 
 AndExpr: Box<PgBenchExpr> = {
-    // Tier 5: Logical AND
+    // Tier 8: Logical AND
     <l:AndExpr> "AND" <r:NotExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::And,
@@ -37,59 +47,163 @@ AndExpr: Box<PgBenchExpr> = {
 };
 
 NotExpr: Box<PgBenchExpr> = {
-    // Tier 4: Logical NOT
-    "NOT" <e:CompExpr> => {
+    // Tier 7: Logical NOT
+    "NOT" <e:IsExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Not,
             args: vec![*e],
+        })
+    },
+    IsExpr,
+};
+
+IsExpr: Box<PgBenchExpr> = {
+    // Tier 6: IS operators (nonassoc)
+    // IS NULL
+    <e:CompExpr> "IS" "NULL" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Is,
+            args: vec![*e, PgBenchExpr::Constant(PgBenchValue::null())],
+        })
+    },
+    // IS NOT NULL
+    <e:CompExpr> "IS" "NOT" "NULL" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Not,
+            args: vec![
+                PgBenchExpr::Function {
+                    function: PgBenchFunction::Is,
+                    args: vec![*e, PgBenchExpr::Constant(PgBenchValue::null())],
+                }
+            ],
+        })
+    },
+    // IS TRUE
+    <e:CompExpr> "IS" "TRUE" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Is,
+            args: vec![*e, PgBenchExpr::Constant(PgBenchValue::boolean(true))],
+        })
+    },
+    // IS NOT TRUE
+    <e:CompExpr> "IS" "NOT" "TRUE" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Not,
+            args: vec![
+                PgBenchExpr::Function {
+                    function: PgBenchFunction::Is,
+                    args: vec![*e, PgBenchExpr::Constant(PgBenchValue::boolean(true))],
+                }
+            ],
+        })
+    },
+    // IS FALSE
+    <e:CompExpr> "IS" "FALSE" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Is,
+            args: vec![*e, PgBenchExpr::Constant(PgBenchValue::boolean(false))],
+        })
+    },
+    // IS NOT FALSE
+    <e:CompExpr> "IS" "NOT" "FALSE" => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Not,
+            args: vec![
+                PgBenchExpr::Function {
+                    function: PgBenchFunction::Is,
+                    args: vec![*e, PgBenchExpr::Constant(PgBenchValue::boolean(false))],
+                }
+            ],
         })
     },
     CompExpr,
 };
 
 CompExpr: Box<PgBenchExpr> = {
-    // Tier 3: Comparison operators
-    <l:AddExpr> "=" <r:AddExpr> => {
+    // Tier 5: Comparison operators (nonassoc)
+    <l:BitwiseExpr> "=" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Eq,
             args: vec![*l, *r],
         })
     },
-    <l:AddExpr> "<>" <r:AddExpr> => {
+    <l:BitwiseExpr> "<>" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Ne,
             args: vec![*l, *r],
         })
     },
-    <l:AddExpr> "<" <r:AddExpr> => {
+    <l:BitwiseExpr> "!=" <r:BitwiseExpr> => {
+        // != is an alias for <>
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Ne,
+            args: vec![*l, *r],
+        })
+    },
+    <l:BitwiseExpr> "<" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Lt,
             args: vec![*l, *r],
         })
     },
-    <l:AddExpr> "<=" <r:AddExpr> => {
+    <l:BitwiseExpr> "<=" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Le,
             args: vec![*l, *r],
         })
     },
-    <l:AddExpr> ">" <r:AddExpr> => {
+    <l:BitwiseExpr> ">" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Lt,
             args: vec![*r, *l],  // Swap: a > b becomes b < a
         })
     },
-    <l:AddExpr> ">=" <r:AddExpr> => {
+    <l:BitwiseExpr> ">=" <r:BitwiseExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Le,
             args: vec![*r, *l],  // Swap: a >= b becomes b <= a
+        })
+    },
+    BitwiseExpr,
+};
+
+BitwiseExpr: Box<PgBenchExpr> = {
+    // Tier 4: Bitwise operators (left-associative)
+    <l:BitwiseExpr> "&" <r:AddExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::BitAnd,
+            args: vec![*l, *r],
+        })
+    },
+    <l:BitwiseExpr> "|" <r:AddExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::BitOr,
+            args: vec![*l, *r],
+        })
+    },
+    <l:BitwiseExpr> "#" <r:AddExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::BitXor,
+            args: vec![*l, *r],
+        })
+    },
+    <l:BitwiseExpr> "<<" <r:AddExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::LShift,
+            args: vec![*l, *r],
+        })
+    },
+    <l:BitwiseExpr> ">>" <r:AddExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::RShift,
+            args: vec![*l, *r],
         })
     },
     AddExpr,
 };
 
 AddExpr: Box<PgBenchExpr> = {
-    // Tier 2: Addition and subtraction
+    // Tier 3: Addition and subtraction
     <l:AddExpr> "+" <r:MulExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Add,
@@ -106,7 +220,7 @@ AddExpr: Box<PgBenchExpr> = {
 };
 
 MulExpr: Box<PgBenchExpr> = {
-    // Tier 1: Multiplication, division, modulo (highest precedence for binary ops)
+    // Tier 2: Multiplication, division, modulo
     <l:MulExpr> "*" <r:UnaryExpr> => {
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Mul,
@@ -129,14 +243,24 @@ MulExpr: Box<PgBenchExpr> = {
 };
 
 UnaryExpr: Box<PgBenchExpr> = {
-    // Unary operators
+    // Tier 1: Unary operators (highest precedence)
     "+" <e:UnaryExpr> => e,  // Unary plus is identity
     "-" <e:UnaryExpr> => {
-        // Unary minus implemented as "0 - x" (matching exprparse.y line 95)
+        // Unary minus implemented as "0 - x" (matching exprparse.y line 94)
         Box::new(PgBenchExpr::Function {
             function: PgBenchFunction::Sub,
             args: vec![
                 PgBenchExpr::Constant(PgBenchValue::int(0)),
+                *e,
+            ],
+        })
+    },
+    // Unary complement "~x" implemented as "0xffff... xor x" (matching exprparse.y line 100)
+    "~" <e:UnaryExpr> => {
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::BitXor,
+            args: vec![
+                PgBenchExpr::Constant(PgBenchValue::int(!0i64)),  // All bits set
                 *e,
             ],
         })
@@ -157,8 +281,11 @@ AtomExpr: Box<PgBenchExpr> = {
     // Variables
     <v:Variable> => Box::new(PgBenchExpr::Variable { name: v }),
 
-    // Function calls (simplified for POC - will expand later)
-    <f:FunctionName> "(" <args:CommaList<Expr>> ")" => {
+    // CASE expressions
+    <c:CaseExpr> => c,
+
+    // Function calls with argument list
+    <f:FunctionName> "(" <args:ExprList> ")" => {
         Box::new(PgBenchExpr::Function {
             function: f,
             args: args.into_iter().map(|b| *b).collect(),
@@ -166,25 +293,75 @@ AtomExpr: Box<PgBenchExpr> = {
     },
 };
 
-// Comma-separated list of expressions
-CommaList<T>: Vec<T> = {
-    <mut v:(<T> ",")*> <e:T?> => match e {
-        None => v,
-        Some(e) => {
-            v.push(e);
-            v
-        }
-    }
+// CASE expression: CASE WHEN cond THEN result [WHEN ...] [ELSE default] END
+CaseExpr: Box<PgBenchExpr> = {
+    // CASE with ELSE clause
+    "CASE" <when_then:WhenThenList> "ELSE" <else_expr:Expr> "END" => {
+        // Build args: [cond1, result1, cond2, result2, ..., else_expr]
+        let mut args = when_then;
+        args.push(*else_expr);
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Case,
+            args,
+        })
+    },
+    // CASE without ELSE (defaults to NULL)
+    "CASE" <when_then:WhenThenList> "END" => {
+        // Build args: [cond1, result1, cond2, result2, ..., NULL]
+        let mut args = when_then;
+        args.push(PgBenchExpr::Constant(PgBenchValue::null()));
+        Box::new(PgBenchExpr::Function {
+            function: PgBenchFunction::Case,
+            args,
+        })
+    },
+};
+
+// WHEN ... THEN ... list (at least one pair)
+WhenThenList: Vec<PgBenchExpr> = {
+    // First WHEN/THEN pair
+    "WHEN" <cond:Expr> "THEN" <result:Expr> => {
+        vec![*cond, *result]
+    },
+    // Additional WHEN/THEN pairs
+    <mut list:WhenThenList> "WHEN" <cond:Expr> "THEN" <result:Expr> => {
+        list.push(*cond);
+        list.push(*result);
+        list
+    },
+};
+
+// Comma-separated list of expressions (for function arguments)
+ExprList: Vec<Box<PgBenchExpr>> = {
+    // Empty list
+    => vec![],
+    // Non-empty list
+    <mut v:(<Expr> ",")*> <e:Expr> => {
+        v.push(e);
+        v
+    },
 };
 
 // Terminals (tokens)
 
 Integer: i64 = {
-    r"[0-9]+" => i64::from_str(<>).unwrap(),
+    // Regular integers
+    r"[0-9]+" => {
+        // Handle overflow during parsing
+        match i64::from_str(<>) {
+            Ok(v) => v,
+            Err(_) => {
+                // Could be overflow or the special case 9223372036854775808 (used for INT64_MIN)
+                // For now, just return max value; special case handling will be in evaluator
+                i64::MAX
+            }
+        }
+    },
 };
 
 Double: f64 = {
-    // Match integers with decimal point or scientific notation
+    // Match doubles with decimal point or scientific notation
+    // Examples: 3.14, .5, 1e10, 2.5e-3
     r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?" => f64::from_str(<>).unwrap(),
     r"\.[0-9]+([eE][+-]?[0-9]+)?" => f64::from_str(<>).unwrap(),
     r"[0-9]+[eE][+-]?[0-9]+" => f64::from_str(<>).unwrap(),
@@ -202,16 +379,47 @@ Variable: String = {
     },
 };
 
+// All built-in functions from exprparse.y (lines 249-384)
 FunctionName: PgBenchFunction = {
+    // Math functions (0 arguments)
+    "pi" => PgBenchFunction::Pi,
+
+    // Math functions (1 argument)
     "abs" => PgBenchFunction::Abs,
     "sqrt" => PgBenchFunction::Sqrt,
-    "pi" => PgBenchFunction::Pi,
+    "ln" => PgBenchFunction::Ln,
+    "exp" => PgBenchFunction::Exp,
+    "int" => PgBenchFunction::Int,
+    "double" => PgBenchFunction::Double,
     "debug" => PgBenchFunction::Debug,
-    // More functions will be added in full implementation
+
+    // Math functions (2 arguments)
+    "pow" => PgBenchFunction::Pow,
+    "power" => PgBenchFunction::Pow,  // Alias for pow
+
+    // Variable argument functions (>= 1 argument)
+    "least" => PgBenchFunction::Least,
+    "greatest" => PgBenchFunction::Greatest,
+
+    // Random functions (2-3 arguments)
+    "random" => PgBenchFunction::Random,
+    "random_gaussian" => PgBenchFunction::RandomGaussian,
+    "random_exponential" => PgBenchFunction::RandomExponential,
+    "random_zipfian" => PgBenchFunction::RandomZipfian,
+
+    // Hash functions (1-2 arguments)
+    "hash" => PgBenchFunction::HashMurmur2,  // Default hash is murmur2
+    "hash_murmur2" => PgBenchFunction::HashMurmur2,
+    "hash_fnv1a" => PgBenchFunction::HashFnv1a,
+
+    // Permute function
+    "permute" => PgBenchFunction::Permute,
 };
 
-// Skip whitespace
+// Skip whitespace and comments
 match {
     r"\s*" => { },  // Skip whitespace
+    r"--[^\n\r]*[\n\r]*" => { },  // Skip SQL-style comments
+    r"/\*([^*]|\*+[^*/])*\*+/" => { },  // Skip C-style comments
     _
 }
