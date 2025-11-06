@@ -5,7 +5,7 @@
 //!
 //! Reference: original-source/pgbench.c lines 4775-5250
 
-use crate::cli::{Args, PartitionMethod};
+use crate::cli::Args;
 use crate::db::connection::PgBenchConnection;
 use crate::error::{PgBenchError, PgBenchResult};
 use std::io::{self, Write};
@@ -130,7 +130,7 @@ fn drop_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
 fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("creating tables...");
 
-    let scale = args.scale_factor;
+    let scale = args.scale;
     let use_bigint = scale >= SCALE_32BIT_THRESHOLD;
     let unlogged = args.unlogged_tables;
     let fillfactor = args.fillfactor;
@@ -170,7 +170,7 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
 
         // CREATE [UNLOGGED] TABLE name
         sql.push_str("CREATE");
-        if unlogged && args.partitions == 0 {
+        if unlogged && args.partitions.is_none() {
             sql.push_str(" UNLOGGED");
         }
         sql.push_str(" TABLE ");
@@ -186,11 +186,15 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
         sql.push(')');
 
         // Partitioning (only for pgbench_accounts)
-        if args.partitions > 0 && table.name == "pgbench_accounts" {
+        if args.partitions.is_some() && table.name == "pgbench_accounts" {
             sql.push_str(" PARTITION BY ");
-            match args.partition_method {
-                PartitionMethod::Range => sql.push_str("RANGE"),
-                PartitionMethod::Hash => sql.push_str("HASH"),
+            let method = args.partition_method.as_deref().unwrap_or("hash");
+            if method == "range" {
+                sql.push_str("RANGE");
+            } else if method == "hash" {
+                sql.push_str("HASH");
+            } else {
+                return Err(PgBenchError::InvalidArgument(format!("Unknown partition method: {}", method)));
             }
             sql.push_str(" (aid)");
         } else if table.use_fillfactor {
@@ -207,7 +211,7 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
     }
 
     // Create partitions if requested
-    if args.partitions > 0 {
+    if args.partitions.is_some() {
         create_partitions(conn, args)?;
     }
 
@@ -226,10 +230,11 @@ struct TableDef {
 ///
 /// Reference: pgbench.c createPartitions() line 4797
 fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
-    let num_partitions = args.partitions;
-    let scale = args.scale_factor;
+    let num_partitions = args.partitions.unwrap(); // Safe: caller checks is_some()
+    let scale = args.scale;
     let fillfactor = args.fillfactor;
     let unlogged = args.unlogged_tables;
+    let is_range = args.partition_method.as_deref() == Some("range");
 
     eprintln!("creating {} partitions...", num_partitions);
 
@@ -246,29 +251,27 @@ fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult
         sql.push_str(&format!(" TABLE pgbench_accounts_{}", p));
         sql.push_str(" PARTITION OF pgbench_accounts");
 
-        match args.partition_method {
-            PartitionMethod::Range => {
-                sql.push_str(" FOR VALUES FROM (");
-                if p == 1 {
-                    sql.push_str("MINVALUE");
-                } else {
-                    sql.push_str(&format!("{}", (p as i64 - 1) * part_size + 1));
-                }
-                sql.push_str(") TO (");
-                if p < num_partitions {
-                    sql.push_str(&format!("{}", p as i64 * part_size + 1));
-                } else {
-                    sql.push_str("MAXVALUE");
-                }
-                sql.push(')');
+        if is_range {
+            sql.push_str(" FOR VALUES FROM (");
+            if p == 1 {
+                sql.push_str("MINVALUE");
+            } else {
+                sql.push_str(&format!("{}", (p as i64 - 1) * part_size + 1));
             }
-            PartitionMethod::Hash => {
-                sql.push_str(&format!(
-                    " FOR VALUES WITH (MODULUS {}, REMAINDER {})",
-                    num_partitions,
-                    p - 1
-                ));
+            sql.push_str(") TO (");
+            if p < num_partitions {
+                sql.push_str(&format!("{}", p as i64 * part_size + 1));
+            } else {
+                sql.push_str("MAXVALUE");
             }
+            sql.push(')');
+        } else {
+            // Hash partitioning
+            sql.push_str(&format!(
+                " FOR VALUES WITH (MODULUS {}, REMAINDER {})",
+                num_partitions,
+                p - 1
+            ));
         }
 
         // Fillfactor for partitions
@@ -286,7 +289,7 @@ fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult
 fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (client-side)...");
 
-    let scale = args.scale_factor as i64;
+    let scale = args.scale as i64;
 
     // Populate branches
     populate_table(
@@ -324,7 +327,7 @@ fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBen
 fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (server-side)...");
 
-    let scale = args.scale_factor as i64;
+    let scale = args.scale as i64;
 
     // Branches
     let sql = format!(

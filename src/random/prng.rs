@@ -209,7 +209,7 @@ impl RngCore for Xoroshiro128StarStar {
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        rand::impls::fill_bytes_via_next(self, dest)
+        rand_core::impls::fill_bytes_via_next(self, dest)
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
