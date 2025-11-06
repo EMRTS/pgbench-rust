@@ -2,6 +2,7 @@
 
 use crate::types::ThreadState;
 use crate::random::PgBenchRng;
+use rand::SeedableRng;
 
 impl ThreadState {
     /// Create a new thread state

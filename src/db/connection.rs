@@ -198,7 +198,7 @@ impl PgBenchConnection {
 
 /// Wrapper for COPY IN writer
 pub struct CopyWriter<'a> {
-    writer: postgres::CopyInSink<'a>,
+    writer: postgres::CopyWriter<'a>,
 }
 
 impl<'a> CopyWriter<'a> {
