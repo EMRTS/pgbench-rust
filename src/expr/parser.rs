@@ -594,7 +594,16 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_syntax() {
-        let result = parse_expression("1 + + 2");
+        // Incomplete expression (missing right operand)
+        let result = parse_expression("1 +");
+        assert!(result.is_err());
+
+        // Unmatched parenthesis
+        let result = parse_expression("(1 + 2");
+        assert!(result.is_err());
+
+        // Invalid operator sequence (can't start with binary operator)
+        let result = parse_expression("* 2");
         assert!(result.is_err());
     }
 

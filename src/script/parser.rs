@@ -107,11 +107,19 @@ fn parse_line(
         let meta_cmd = parse_meta_command(&line[1..], line_no)?;
         commands.push(Command::Meta(meta_cmd));
     } else {
-        // This is SQL - accumulate it
+        // This is SQL - accumulate it, but split on semicolons
         if !current_sql.is_empty() {
             current_sql.push('\n');
         }
         current_sql.push_str(line);
+
+        // Check if line ends with semicolon - if so, flush the SQL command
+        if line.trim().ends_with(';') {
+            commands.push(Command::Sql {
+                query: current_sql.trim().to_string(),
+            });
+            current_sql.clear();
+        }
     }
 
     Ok(())
