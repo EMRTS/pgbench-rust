@@ -213,48 +213,48 @@ fn evaluate_standard_function(
     match func {
         // ===== Arithmetic Operators =====
         PgBenchFunction::Add => {
-            check_arg_count("addition", 2, args)?;
+            check_arg_count("addition", 2, args.len())?;
             arithmetic_op(&args[0], &args[1], |a, b| a.checked_add(b), |a, b| a + b)
         }
 
         PgBenchFunction::Sub => {
-            check_arg_count("subtraction", 2, args)?;
+            check_arg_count("subtraction", 2, args.len())?;
             arithmetic_op(&args[0], &args[1], |a, b| a.checked_sub(b), |a, b| a - b)
         }
 
         PgBenchFunction::Mul => {
-            check_arg_count("multiplication", 2, args)?;
+            check_arg_count("multiplication", 2, args.len())?;
             arithmetic_op(&args[0], &args[1], |a, b| a.checked_mul(b), |a, b| a * b)
         }
 
         PgBenchFunction::Div => {
-            check_arg_count("division", 2, args)?;
+            check_arg_count("division", 2, args.len())?;
             division_op(&args[0], &args[1])
         }
 
         PgBenchFunction::Mod => {
-            check_arg_count("modulo", 2, args)?;
+            check_arg_count("modulo", 2, args.len())?;
             modulo_op(&args[0], &args[1])
         }
 
         // ===== Comparison Operators =====
         PgBenchFunction::Eq => {
-            check_arg_count("equality", 2, args)?;
+            check_arg_count("equality", 2, args.len())?;
             comparison_op(&args[0], &args[1], |cmp| cmp == std::cmp::Ordering::Equal)
         }
 
         PgBenchFunction::Ne => {
-            check_arg_count("inequality", 2, args)?;
+            check_arg_count("inequality", 2, args.len())?;
             comparison_op(&args[0], &args[1], |cmp| cmp != std::cmp::Ordering::Equal)
         }
 
         PgBenchFunction::Lt => {
-            check_arg_count("less than", 2, args)?;
+            check_arg_count("less than", 2, args.len())?;
             comparison_op(&args[0], &args[1], |cmp| cmp == std::cmp::Ordering::Less)
         }
 
         PgBenchFunction::Le => {
-            check_arg_count("less or equal", 2, args)?;
+            check_arg_count("less or equal", 2, args.len())?;
             comparison_op(&args[0], &args[1], |cmp| cmp != std::cmp::Ordering::Greater)
         }
 
@@ -262,51 +262,51 @@ fn evaluate_standard_function(
         // (AND, OR already handled as lazy functions)
 
         PgBenchFunction::Not => {
-            check_arg_count("NOT", 1, args)?;
+            check_arg_count("NOT", 1, args.len())?;
             let b = args[0].coerce_to_bool()?;
             Ok(PgBenchValue::boolean(!b))
         }
 
         // ===== Bitwise Operators =====
         PgBenchFunction::BitAnd => {
-            check_arg_count("bitwise AND", 2, args)?;
+            check_arg_count("bitwise AND", 2, args.len())?;
             bitwise_op(&args[0], &args[1], |a, b| a & b)
         }
 
         PgBenchFunction::BitOr => {
-            check_arg_count("bitwise OR", 2, args)?;
+            check_arg_count("bitwise OR", 2, args.len())?;
             bitwise_op(&args[0], &args[1], |a, b| a | b)
         }
 
         PgBenchFunction::BitXor => {
-            check_arg_count("bitwise XOR", 2, args)?;
+            check_arg_count("bitwise XOR", 2, args.len())?;
             bitwise_op(&args[0], &args[1], |a, b| a ^ b)
         }
 
         PgBenchFunction::LShift => {
-            check_arg_count("left shift", 2, args)?;
+            check_arg_count("left shift", 2, args.len())?;
             shift_op(&args[0], &args[1], true)
         }
 
         PgBenchFunction::RShift => {
-            check_arg_count("right shift", 2, args)?;
+            check_arg_count("right shift", 2, args.len())?;
             shift_op(&args[0], &args[1], false)
         }
 
         // ===== IS Operator =====
         PgBenchFunction::Is => {
-            check_arg_count("IS", 2, args)?;
+            check_arg_count("IS", 2, args.len())?;
             is_op(&args[0], &args[1])
         }
 
         // ===== Math Functions =====
         PgBenchFunction::Abs => {
-            check_arg_count("abs", 1, args)?;
+            check_arg_count("abs", 1, args.len())?;
             abs_func(&args[0])
         }
 
         PgBenchFunction::Sqrt => {
-            check_arg_count("sqrt", 1, args)?;
+            check_arg_count("sqrt", 1, args.len())?;
             let val = args[0].coerce_to_double()?;
             if val < 0.0 {
                 return Err(PgBenchError::invalid_operation("sqrt of negative number"));
@@ -315,7 +315,7 @@ fn evaluate_standard_function(
         }
 
         PgBenchFunction::Ln => {
-            check_arg_count("ln", 1, args)?;
+            check_arg_count("ln", 1, args.len())?;
             let val = args[0].coerce_to_double()?;
             if val <= 0.0 {
                 return Err(PgBenchError::invalid_operation("ln of non-positive number"));
@@ -324,31 +324,31 @@ fn evaluate_standard_function(
         }
 
         PgBenchFunction::Exp => {
-            check_arg_count("exp", 1, args)?;
+            check_arg_count("exp", 1, args.len())?;
             let val = args[0].coerce_to_double()?;
             Ok(PgBenchValue::double(val.exp()))
         }
 
         PgBenchFunction::Pow => {
-            check_arg_count("pow", 2, args)?;
+            check_arg_count("pow", 2, args.len())?;
             let base = args[0].coerce_to_double()?;
             let exp = args[1].coerce_to_double()?;
             Ok(PgBenchValue::double(base.powf(exp)))
         }
 
         PgBenchFunction::Pi => {
-            check_arg_count("pi", 0, args)?;
+            check_arg_count("pi", 0, args.len())?;
             Ok(PgBenchValue::double(std::f64::consts::PI))
         }
 
         PgBenchFunction::Int => {
-            check_arg_count("int", 1, args)?;
+            check_arg_count("int", 1, args.len())?;
             let val = args[0].coerce_to_int()?;
             Ok(PgBenchValue::int(val))
         }
 
         PgBenchFunction::Double => {
-            check_arg_count("double", 1, args)?;
+            check_arg_count("double", 1, args.len())?;
             let val = args[0].coerce_to_double()?;
             Ok(PgBenchValue::double(val))
         }
@@ -369,7 +369,7 @@ fn evaluate_standard_function(
 
         // ===== Debug Function =====
         PgBenchFunction::Debug => {
-            check_arg_count("debug", 1, args)?;
+            check_arg_count("debug", 1, args.len())?;
             // Print the value and return it
             eprintln!("debug: {}", args[0]);
             Ok(args[0].clone())
