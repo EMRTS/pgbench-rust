@@ -2,7 +2,6 @@
 
 use crate::error::{PgBenchError, PgBenchResult};
 use crate::random::PgBenchRng;
-use rand::RngCore;
 use rand_distr::{Distribution, Normal, Exp};
 
 /// Generate a uniform random integer in [min, max]

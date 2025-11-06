@@ -3,8 +3,17 @@
 //! Provides command-line argument parsing using clap.
 //! Aims for 100% compatibility with the original pgbench CLI.
 
-use clap::{Parser, ArgGroup};
+use clap::{Parser, ArgGroup, ValueEnum};
 use anyhow::Result;
+
+/// Partition method for pgbench tables
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PartitionMethod {
+    /// Range partitioning
+    Range,
+    /// Hash partitioning
+    Hash,
+}
 
 /// PostgreSQL benchmarking tool
 #[derive(Parser, Debug)]
@@ -129,8 +138,8 @@ pub struct Args {
     pub partitions: Option<i32>,
 
     /// Partition method (range, hash)
-    #[arg(long)]
-    pub partition_method: Option<String>,
+    #[arg(long, default_value = "range")]
+    pub partition_method: PartitionMethod,
 
     /// Tablespace for tables
     #[arg(long)]
@@ -231,7 +240,7 @@ mod tests {
             aggregate_interval: None,
             report_latencies: false,
             partitions: None,
-            partition_method: None,
+            partition_method: PartitionMethod::Range,
             tablespace: None,
             index_tablespace: None,
         };

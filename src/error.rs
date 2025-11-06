@@ -36,6 +36,13 @@ pub enum PgBenchError {
         line: usize,
     },
 
+    /// Generic parsing error with optional line number
+    #[error("Parse error{}: {message}", line.map(|l| format!(" at line {}", l)).unwrap_or_default())]
+    ParseError {
+        message: String,
+        line: Option<usize>,
+    },
+
     /// Script execution error with context
     #[error("Condition error in script \"{script}\" command {command}: {message}")]
     ScriptExecutionError {
@@ -133,6 +140,10 @@ pub enum PgBenchError {
     /// Integer overflow with operation details
     #[error("{operation} overflow")]
     OperationOverflow { operation: String },
+
+    /// Invalid operation
+    #[error("Invalid operation: {message}")]
+    InvalidOperation { message: String },
 
     /// Initialization error
     #[error("Initialization error: {0}")]

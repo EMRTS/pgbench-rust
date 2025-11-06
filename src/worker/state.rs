@@ -2,6 +2,7 @@
 
 use crate::types::ThreadState;
 use crate::random::PgBenchRng;
+use rand::SeedableRng;
 
 impl ThreadState {
     /// Create a new thread state
@@ -17,7 +18,7 @@ impl ThreadState {
 
     /// Get a random number generator for this thread
     pub fn rng(&mut self) -> PgBenchRng {
-        PgBenchRng::new(self.rng_state)
+        PgBenchRng::seed_from_u64(self.rng_state)
     }
 }
 

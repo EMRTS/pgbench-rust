@@ -197,11 +197,11 @@ impl PgBenchConnection {
 }
 
 /// Wrapper for COPY IN writer
-pub struct CopyWriter {
-    writer: postgres::binary_copy::BinaryCopyInWriter,
+pub struct CopyWriter<'a> {
+    writer: postgres::CopyInWriter<'a>,
 }
 
-impl CopyWriter {
+impl<'a> CopyWriter<'a> {
     /// Finish the COPY operation
     pub fn finish(self) -> PgBenchResult<u64> {
         self.writer
@@ -210,7 +210,7 @@ impl CopyWriter {
     }
 }
 
-impl std::io::Write for CopyWriter {
+impl<'a> std::io::Write for CopyWriter<'a> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.writer.write(buf)
     }

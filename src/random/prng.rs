@@ -209,7 +209,19 @@ impl RngCore for Xoroshiro128StarStar {
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        rand::impls::fill_bytes_via_next(self, dest)
+        // Fill buffer using next_u64(), similar to rand's default implementation
+        let mut left = dest;
+        while left.len() >= 8 {
+            let (l, r) = {left}.split_at_mut(8);
+            left = r;
+            let chunk: [u8; 8] = self.next_u64().to_le_bytes();
+            l.copy_from_slice(&chunk);
+        }
+        let n = left.len();
+        if n > 0 {
+            let chunk: [u8; 8] = self.next_u64().to_le_bytes();
+            left.copy_from_slice(&chunk[..n]);
+        }
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {

@@ -130,7 +130,7 @@ fn drop_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
 fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("creating tables...");
 
-    let scale = args.scale_factor;
+    let scale = args.scale;
     let use_bigint = scale >= SCALE_32BIT_THRESHOLD;
     let unlogged = args.unlogged_tables;
     let fillfactor = args.fillfactor;
@@ -170,7 +170,7 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
 
         // CREATE [UNLOGGED] TABLE name
         sql.push_str("CREATE");
-        if unlogged && args.partitions == 0 {
+        if unlogged && args.partitions.unwrap_or(0) == 0 {
             sql.push_str(" UNLOGGED");
         }
         sql.push_str(" TABLE ");
@@ -186,7 +186,7 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
         sql.push(')');
 
         // Partitioning (only for pgbench_accounts)
-        if args.partitions > 0 && table.name == "pgbench_accounts" {
+        if args.partitions.unwrap_or(0) > 0 && table.name == "pgbench_accounts" {
             sql.push_str(" PARTITION BY ");
             match args.partition_method {
                 PartitionMethod::Range => sql.push_str("RANGE"),
@@ -207,7 +207,7 @@ fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()>
     }
 
     // Create partitions if requested
-    if args.partitions > 0 {
+    if args.partitions.unwrap_or(0) > 0 {
         create_partitions(conn, args)?;
     }
 
@@ -226,8 +226,8 @@ struct TableDef {
 ///
 /// Reference: pgbench.c createPartitions() line 4797
 fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
-    let num_partitions = args.partitions;
-    let scale = args.scale_factor;
+    let num_partitions = args.partitions.expect("partitions should be Some when this function is called");
+    let scale = args.scale;
     let fillfactor = args.fillfactor;
     let unlogged = args.unlogged_tables;
 
@@ -286,7 +286,7 @@ fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult
 fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (client-side)...");
 
-    let scale = args.scale_factor as i64;
+    let scale = args.scale as i64;
 
     // Populate branches
     populate_table(
@@ -324,7 +324,7 @@ fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBen
 fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (server-side)...");
 
-    let scale = args.scale_factor as i64;
+    let scale = args.scale as i64;
 
     // Branches
     let sql = format!(
