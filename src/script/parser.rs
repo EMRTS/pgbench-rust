@@ -141,9 +141,9 @@ fn parse_meta_command(line: &str, line_no: usize) -> PgBenchResult<MetaCommand> 
         "endif" => parse_endif_command(args, line_no),
         "startpipeline" => parse_startpipeline_command(args, line_no),
         "endpipeline" => parse_endpipeline_command(args, line_no),
-        _ => Err(PgBenchError::ParseError {
+        _ => Err(PgBenchError::ScriptParseError {
             message: format!("Unknown meta-command: \\{}", cmd),
-            line: Some(line_no),
+            line: line_no,
         }),
     }
 }
@@ -153,9 +153,9 @@ fn parse_set_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
 
     if parts.is_empty() || parts[0].is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\set requires a variable name".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -163,9 +163,9 @@ fn parse_set_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     let value = if parts.len() > 1 {
         parts[1].trim().to_string()
     } else {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\set requires a value expression".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     };
 
@@ -177,9 +177,9 @@ fn parse_setshell_command(args: &str, line_no: usize) -> PgBenchResult<MetaComma
     let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
 
     if parts.is_empty() || parts[0].is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\setshell requires a variable name".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -187,9 +187,9 @@ fn parse_setshell_command(args: &str, line_no: usize) -> PgBenchResult<MetaComma
     let command = if parts.len() > 1 {
         parts[1].trim().to_string()
     } else {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\setshell requires a shell command".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     };
 
@@ -199,9 +199,9 @@ fn parse_setshell_command(args: &str, line_no: usize) -> PgBenchResult<MetaComma
 /// Parse \sleep duration
 fn parse_sleep_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\sleep requires a duration".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -221,9 +221,9 @@ fn parse_sleep_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand>
     };
 
     let duration_value: f64 = num_str.trim().parse().map_err(|_| {
-        PgBenchError::ParseError {
+        PgBenchError::ScriptParseError {
             message: format!("Invalid sleep duration: {}", args),
-            line: Some(line_no),
+            line: line_no,
         }
     })?;
 
@@ -236,15 +236,15 @@ fn parse_sleep_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand>
 /// Parse \if condition
 fn parse_if_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\if requires a condition expression".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
-    let condition = parse_expression(args).map_err(|e| PgBenchError::ParseError {
+    let condition = parse_expression(args).map_err(|e| PgBenchError::ScriptParseError {
         message: format!("Invalid \\if condition: {}", e),
-        line: Some(line_no),
+        line: line_no,
     })?;
 
     Ok(MetaCommand::If { condition })
@@ -253,15 +253,15 @@ fn parse_if_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
 /// Parse \elif condition
 fn parse_elif_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\elif requires a condition expression".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
-    let condition = parse_expression(args).map_err(|e| PgBenchError::ParseError {
+    let condition = parse_expression(args).map_err(|e| PgBenchError::ScriptParseError {
         message: format!("Invalid \\elif condition: {}", e),
-        line: Some(line_no),
+        line: line_no,
     })?;
 
     Ok(MetaCommand::ElseIf { condition })
@@ -270,9 +270,9 @@ fn parse_elif_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> 
 /// Parse \else
 fn parse_else_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if !args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\else does not take any arguments".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -282,9 +282,9 @@ fn parse_else_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> 
 /// Parse \endif
 fn parse_endif_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if !args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\endif does not take any arguments".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -294,9 +294,9 @@ fn parse_endif_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand>
 /// Parse \startpipeline
 fn parse_startpipeline_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if !args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\startpipeline does not take any arguments".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 
@@ -306,9 +306,9 @@ fn parse_startpipeline_command(args: &str, line_no: usize) -> PgBenchResult<Meta
 /// Parse \endpipeline
 fn parse_endpipeline_command(args: &str, line_no: usize) -> PgBenchResult<MetaCommand> {
     if !args.is_empty() {
-        return Err(PgBenchError::ParseError {
+        return Err(PgBenchError::ScriptParseError {
             message: "\\endpipeline does not take any arguments".to_string(),
-            line: Some(line_no),
+            line: line_no,
         });
     }
 

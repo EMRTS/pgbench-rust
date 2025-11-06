@@ -281,9 +281,7 @@ impl PgBenchError {
 
     /// Create an invalid operation error
     pub fn invalid_operation(message: impl Into<String>) -> Self {
-        Self::InvalidOperation {
-            message: message.into(),
-        }
+        Self::ExpressionEvalError(message.into())
     }
 
     /// Create an invalid function arguments error
