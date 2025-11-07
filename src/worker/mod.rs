@@ -5,9 +5,6 @@
 pub mod thread;
 pub mod state;
 
-pub use thread::run_benchmark;
-
-// TODO: Implement thread pool
-// TODO: Implement thread synchronization
-// TODO: Implement workload distribution
-// TODO: Handle thread barriers
+// Re-export key types and functions
+pub use state::{ClientState, ConnectionState, StatsData, ThreadState};
+pub use thread::{aggregate_stats, total_transactions, ThreadPool};
