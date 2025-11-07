@@ -6,7 +6,8 @@
 //! Reference: original-source/pgbench.c executeStatement() (lines 5540-5760)
 
 use crate::error::{PgBenchError, PgBenchResult};
-use crate::expr::eval::{eval_expr, EvalContext};
+use crate::expr::eval::{evaluate_expression, EvalContext};
+use crate::expr::parser::parse_expression;
 use crate::types::{Command, MetaCommand, PgBenchExpr, PgBenchValue};
 use crate::worker::state::ClientState;
 use std::time::Duration;
@@ -32,7 +33,7 @@ impl ScriptExecutor {
     /// Reference: pgbench.c executeStatement() (lines 5540-5760)
     pub fn execute(command: &Command, client: &mut ClientState) -> PgBenchResult<bool> {
         match command {
-            Command::Sql(sql) => Self::execute_sql(sql, client),
+            Command::Sql { query } => Self::execute_sql(query, client),
             Command::Meta(meta) => Self::execute_meta(meta, client),
         }
     }
@@ -63,13 +64,13 @@ impl ScriptExecutor {
     /// Reference: pgbench.c executeStatement() meta-command cases
     fn execute_meta(meta: &MetaCommand, client: &mut ClientState) -> PgBenchResult<bool> {
         match meta {
-            MetaCommand::Set { variable, expr } => Self::execute_set(variable, expr, client),
+            MetaCommand::Set { variable, value } => Self::execute_set(variable, value, client),
             MetaCommand::Sleep { duration } => Self::execute_sleep(*duration, client),
             MetaCommand::SetShell { variable, command } => {
                 Self::execute_setshell(variable, command, client)
             }
             MetaCommand::If { condition } => Self::execute_if(condition, client),
-            MetaCommand::Elif { condition } => Self::execute_elif(condition, client),
+            MetaCommand::ElseIf { condition } => Self::execute_elif(condition, client),
             MetaCommand::Else => Self::execute_else(client),
             MetaCommand::EndIf => Self::execute_endif(client),
             MetaCommand::StartPipeline => Self::execute_start_pipeline(client),
@@ -79,29 +80,37 @@ impl ScriptExecutor {
 
     /// Execute \set command
     ///
-    /// Evaluates the expression and sets the variable.
+    /// Parses and evaluates the expression, then sets the variable.
     /// Reference: pgbench.c executeStatement() META_SET case (lines 5650-5670)
     fn execute_set(
         variable: &str,
-        expr: &PgBenchExpr,
+        value_str: &str,
         client: &mut ClientState,
     ) -> PgBenchResult<bool> {
-        log::debug!("Client {}: Setting variable: {}", client.id, variable);
+        log::debug!("Client {}: Setting variable: {} = {}", client.id, variable, value_str);
 
-        // Create evaluation context with client variables
-        let context = EvalContext::new(&client.variables, &mut client.func_rng);
+        // Parse the value string as an expression
+        let expr = parse_expression(value_str)?;
+
+        // Create evaluation context
+        let mut context = EvalContext::new();
+
+        // Add client variables to context
+        for (name, val) in &client.variables {
+            context.set_variable(name.clone(), val.clone());
+        }
 
         // Evaluate the expression
-        let value = eval_expr(expr, &context)?;
+        let value = evaluate_expression(&expr, &context, &mut client.func_rng)?;
 
         // Set the variable
-        client.set_variable(variable.to_string(), value);
+        client.set_variable(variable.to_string(), value.clone());
 
         log::debug!(
             "Client {}: Variable {} = {}",
             client.id,
             variable,
-            client.get_variable(variable).unwrap()
+            value
         );
 
         Ok(true)
@@ -109,15 +118,18 @@ impl ScriptExecutor {
 
     /// Execute \sleep command
     ///
-    /// Sets the client to sleep for the specified duration.
+    /// Sets the client to sleep for the specified duration (in seconds).
     /// Reference: pgbench.c executeStatement() META_SLEEP case (lines 5675-5690)
-    fn execute_sleep(duration_us: u64, client: &mut ClientState) -> PgBenchResult<bool> {
+    fn execute_sleep(duration_sec: f64, client: &mut ClientState) -> PgBenchResult<bool> {
+        // Convert seconds to microseconds
+        let duration_us = (duration_sec * 1_000_000.0) as u64;
         let duration = Duration::from_micros(duration_us);
+
         log::debug!(
-            "Client {}: Sleeping for {:?} ({} us)",
+            "Client {}: Sleeping for {:?} ({} seconds)",
             client.id,
             duration,
-            duration_us
+            duration_sec
         );
 
         // Set client to sleep (state machine will handle the actual sleep)
@@ -148,7 +160,11 @@ impl ScriptExecutor {
             .arg(command)
             .output()
             .map_err(|e| {
-                PgBenchError::InvalidScript(format!("Failed to execute shell command: {}", e))
+                PgBenchError::ScriptExecutionError {
+                    script: "unknown".to_string(),
+                    command: 0,
+                    message: format!("Failed to execute shell command: {}", e),
+                }
             })?;
 
         // Get stdout as string (trimming newline)
@@ -157,9 +173,9 @@ impl ScriptExecutor {
 
         // Try to parse as integer first, then as double, otherwise use as string
         let value = if let Ok(i) = output_str.parse::<i64>() {
-            PgBenchValue::Int(i)
+            PgBenchValue::int(i)
         } else if let Ok(d) = output_str.parse::<f64>() {
-            PgBenchValue::Double(d)
+            PgBenchValue::double(d)
         } else {
             // pgbench doesn't support string values, so we'll try to parse as integer
             // If that fails, set to NULL
@@ -169,7 +185,7 @@ impl ScriptExecutor {
                 output_str,
                 variable
             );
-            PgBenchValue::Null
+            PgBenchValue::null()
         };
 
         // Set the variable
@@ -193,10 +209,15 @@ impl ScriptExecutor {
         log::debug!("Client {}: Evaluating \\if condition", client.id);
 
         // Create evaluation context
-        let context = EvalContext::new(&client.variables, &mut client.func_rng);
+        let mut context = EvalContext::new();
+
+        // Add client variables to context
+        for (name, val) in &client.variables {
+            context.set_variable(name.clone(), val.clone());
+        }
 
         // Evaluate condition as boolean
-        let value = eval_expr(condition, &context)?;
+        let value = evaluate_expression(condition, &context, &mut client.func_rng)?;
         let result = value.coerce_to_bool()?;
 
         log::debug!("Client {}: \\if condition = {}", client.id, result);
@@ -213,10 +234,15 @@ impl ScriptExecutor {
         log::debug!("Client {}: Evaluating \\elif condition", client.id);
 
         // Create evaluation context
-        let context = EvalContext::new(&client.variables, &mut client.func_rng);
+        let mut context = EvalContext::new();
+
+        // Add client variables to context
+        for (name, val) in &client.variables {
+            context.set_variable(name.clone(), val.clone());
+        }
 
         // Evaluate condition as boolean
-        let value = eval_expr(condition, &context)?;
+        let value = evaluate_expression(condition, &context, &mut client.func_rng)?;
         let result = value.coerce_to_bool()?;
 
         log::debug!("Client {}: \\elif condition = {}", client.id, result);
@@ -268,8 +294,6 @@ impl ScriptExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::parser::parse_expr;
-    use crate::types::PgBenchValue;
 
     #[test]
     fn test_execute_sleep_duration() {
