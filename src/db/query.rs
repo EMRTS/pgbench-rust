@@ -157,6 +157,7 @@ impl Default for PreparedStatementCache {
 ///
 /// This wraps a PgBenchConnection and provides high-level query execution
 /// with prepared statement caching and error handling.
+#[derive(Debug)]
 pub struct QueryExecutor {
     /// The underlying database connection
     connection: PgBenchConnection,
