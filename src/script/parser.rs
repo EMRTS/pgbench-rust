@@ -323,10 +323,16 @@ mod tests {
     fn test_parse_simple_sql() {
         let script = "SELECT 1;\nSELECT 2;";
         let commands = parse_script(script).unwrap();
-        assert_eq!(commands.len(), 1);
+        // Each SQL statement ending with ; becomes its own command
+        assert_eq!(commands.len(), 2);
         match &commands[0] {
             Command::Sql { query } => {
                 assert!(query.contains("SELECT 1"));
+            }
+            _ => panic!("Expected SQL command"),
+        }
+        match &commands[1] {
+            Command::Sql { query } => {
                 assert!(query.contains("SELECT 2"));
             }
             _ => panic!("Expected SQL command"),
@@ -398,10 +404,17 @@ mod tests {
     fn test_parse_comments() {
         let script = "-- This is a comment\nSELECT 1; -- inline comment\n/* block comment */\nSELECT 2;";
         let commands = parse_script(script).unwrap();
-        assert_eq!(commands.len(), 1);
+        // Each SQL statement ending with ; becomes its own command
+        assert_eq!(commands.len(), 2);
         match &commands[0] {
             Command::Sql { query } => {
                 assert!(query.contains("SELECT 1"));
+                assert!(!query.contains("comment"));
+            }
+            _ => panic!("Expected SQL command"),
+        }
+        match &commands[1] {
+            Command::Sql { query } => {
                 assert!(query.contains("SELECT 2"));
                 assert!(!query.contains("comment"));
             }
