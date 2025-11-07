@@ -167,9 +167,9 @@ impl ScriptExecutor {
                 }
             })?;
 
-        // Get stdout as string (trimming newline)
+        // Get stdout as string (trim both leading and trailing whitespace)
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let output_str = output_str.trim_end();
+        let output_str = output_str.trim();
 
         // Try to parse as integer first, then as double, otherwise use as string
         let value = if let Ok(i) = output_str.parse::<i64>() {
@@ -347,7 +347,7 @@ mod tests {
     fn test_setshell_parse_whitespace() {
         // Test trimming whitespace from shell output
         let output = "  42  \n";
-        let trimmed = output.trim_end();
+        let trimmed = output.trim();
         let value: Result<i64, _> = trimmed.parse();
         assert_eq!(value.unwrap(), 42);
     }
