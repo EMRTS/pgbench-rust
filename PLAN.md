@@ -487,6 +487,7 @@ File: `src/script/executor.rs`
 - ✅ Expression evaluation integrated
 - ✅ Variable management through ClientState
 - ✅ Unit tests for parsing logic
+- ✅ All 231 tests passing (5 new executor tests)
 
 ---
 
