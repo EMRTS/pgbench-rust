@@ -311,23 +311,18 @@ mod tests {
 
     #[test]
     fn test_total_transactions() {
-        let mut thread1 = ThreadState::new(0, 2, 100);
-        thread1.clients[0].transaction_count = 10;
-        thread1.clients[1].transaction_count = 15;
-
-        let mut thread2 = ThreadState::new(1, 1, 200);
-        thread2.clients[0].transaction_count = 20;
-
-        // Can't directly push to clients in test without proper setup
-        // This test structure would need adjustment for real testing
-        // For now, we'll test with empty clients
+        // Create threads with 0 clients (empty)
         let thread1 = ThreadState::new(0, 0, 100);
         let thread2 = ThreadState::new(1, 0, 200);
 
         let threads = vec![thread1, thread2];
         let total = total_transactions(&threads);
 
-        assert_eq!(total, 0); // Both threads have 0 clients
+        // Both threads have 0 clients, so total should be 0
+        assert_eq!(total, 0);
+
+        // Note: Testing with actual clients would require proper ClientState setup
+        // with real database connections, which is better suited for integration tests
     }
 
     // Note: Full integration test of thread pool with actual database
