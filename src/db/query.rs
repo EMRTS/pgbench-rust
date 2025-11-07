@@ -265,9 +265,11 @@ impl QueryExecutor {
     fn execute_extended(&mut self, query: &str, params: &[&str]) -> PgBenchResult<Vec<Row>> {
         log::debug!("Executing extended query: {} (params: {:?})", query, params);
 
-        // Convert string parameters to proper types for query
-        // Note: rust-postgres handles parameter conversion automatically
-        match self.connection.client().query(query, &params) {
+        // Convert string parameters to trait objects that postgres expects
+        let params_as_trait: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
+
+        match self.connection.client().query(query, &params_as_trait) {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -316,11 +318,15 @@ impl QueryExecutor {
             params
         );
 
+        // Convert string parameters to trait objects that postgres expects
+        let params_as_trait: Vec<&(dyn postgres::types::ToSql + Sync)> =
+            params.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
+
         // Execute the prepared statement
         // Note: rust-postgres doesn't use statement names the same way as libpq
         // Instead, it uses Statement objects. For simplicity, we'll just use
         // the query directly with parameters, which is equivalent.
-        match self.connection.client().query(query, &params) {
+        match self.connection.client().query(query, &params_as_trait) {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
