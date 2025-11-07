@@ -12,6 +12,54 @@ use std::sync::{Arc, Barrier};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+/// Benchmark configuration options
+#[derive(Debug, Clone)]
+pub struct BenchmarkConfig {
+    /// Scale factor (number of scale units)
+    pub scale: i64,
+
+    /// Number of transactions per client (None = unlimited)
+    pub transactions: Option<u64>,
+
+    /// Time limit in seconds (None = unlimited)
+    pub time_limit: Option<u64>,
+}
+
+impl BenchmarkConfig {
+    /// Create a new benchmark configuration
+    pub fn new(scale: i64) -> Self {
+        Self {
+            scale,
+            transactions: None,
+            time_limit: None,
+        }
+    }
+
+    /// Set transaction limit per client
+    pub fn with_transactions(mut self, transactions: u64) -> Self {
+        self.transactions = Some(transactions);
+        self
+    }
+
+    /// Set time limit in seconds
+    pub fn with_time_limit(mut self, seconds: u64) -> Self {
+        self.time_limit = Some(seconds);
+        self
+    }
+
+    /// Get effective transaction limit (with default for testing)
+    fn effective_transaction_limit(&self) -> Option<u64> {
+        self.transactions.or_else(|| {
+            if self.time_limit.is_none() {
+                // Default to 10 transactions for testing if no limits specified
+                Some(10)
+            } else {
+                None
+            }
+        })
+    }
+}
+
 /// Thread pool manager for benchmark execution
 ///
 /// Manages multiple worker threads, each running multiple clients (database connections).
@@ -72,7 +120,7 @@ impl ThreadPool {
     /// * `connection_string` - Database connection string
     /// * `query_mode` - Query protocol mode
     /// * `base_seed` - Base seed for RNG (each thread gets derived seed)
-    /// * `scale` - Scale factor for pgbench (number of scale units)
+    /// * `config` - Benchmark configuration (scale, limits, etc.)
     ///
     /// # Returns
     /// Self with spawned threads
@@ -81,7 +129,7 @@ impl ThreadPool {
         connection_string: String,
         query_mode: QueryMode,
         base_seed: u64,
-        scale: i64,
+        config: BenchmarkConfig,
     ) -> PgBenchResult<Self> {
         for thread_id in 0..self.num_threads {
             // Derive unique seed for this thread
@@ -91,6 +139,7 @@ impl ThreadPool {
             let barrier = Arc::clone(&self.start_barrier);
             let conn_str = connection_string.clone();
             let clients_per_thread = self.clients_per_thread;
+            let bench_config = config.clone();
 
             // Spawn the thread
             let handle = thread::Builder::new()
@@ -102,7 +151,7 @@ impl ThreadPool {
                         conn_str,
                         query_mode,
                         thread_seed,
-                        scale,
+                        bench_config,
                         barrier,
                     )
                 })
@@ -182,7 +231,7 @@ fn thread_worker(
     connection_string: String,
     query_mode: QueryMode,
     seed: u64,
-    scale: i64,
+    config: BenchmarkConfig,
     start_barrier: Arc<Barrier>,
 ) -> PgBenchResult<ThreadState> {
     log::debug!(
@@ -221,7 +270,7 @@ fn thread_worker(
         let mut client = ClientState::new(global_client_id, connection, query_mode, client_seed);
 
         // Initialize standard pgbench variables
-        client.initialize_standard_variables(scale, client_seed);
+        client.initialize_standard_variables(config.scale, client_seed);
 
         thread_state.add_client(client);
     }
@@ -251,12 +300,24 @@ fn thread_worker(
     log::debug!("Thread {} parsed script with {} commands", thread_id, commands.len());
 
     // Main benchmark loop
-    // Run until all clients are finished
-    // TODO: Add support for time limit (-T flag)
-    // TODO: Add support for transaction limit (-t flag) - for now run indefinitely
-    const MAX_TRANSACTIONS_PER_CLIENT: u64 = 10; // Temporary limit for testing
+    // Run until all clients are finished or limits reached
+    let benchmark_start = Instant::now();
+    let time_limit_duration = config.time_limit.map(|secs| Duration::from_secs(secs));
 
     while !thread_state.all_clients_finished() {
+        // Check time limit
+        if let Some(limit) = time_limit_duration {
+            if benchmark_start.elapsed() >= limit {
+                log::info!("Thread {} reached time limit ({} seconds)", thread_id, config.time_limit.unwrap());
+                // Mark all clients as finished
+                for client in &mut thread_state.clients {
+                    if !matches!(client.state, ConnectionState::Finished | ConnectionState::Aborted) {
+                        client.state = ConnectionState::Finished;
+                    }
+                }
+                break;
+            }
+        }
         // Process each client
         for client_idx in 0..thread_state.num_clients() {
             let client = &mut thread_state.clients[client_idx];
@@ -266,10 +327,13 @@ fn thread_worker(
                 continue;
             }
 
-            // Check if client has reached transaction limit (temporary)
-            if client.transaction_count >= MAX_TRANSACTIONS_PER_CLIENT {
-                client.state = ConnectionState::Finished;
-                continue;
+            // Check if client has reached transaction limit
+            if let Some(limit) = config.effective_transaction_limit() {
+                if client.transaction_count >= limit {
+                    client.state = ConnectionState::Finished;
+                    log::debug!("Client {} reached transaction limit ({})", client.id, limit);
+                    continue;
+                }
             }
 
             // Process client state machine
