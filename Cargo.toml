@@ -20,7 +20,6 @@ clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
 
 # Random number generation
 rand = { version = "0.8", features = ["small_rng"] }
-rand_distr = "0.4"  # For Gaussian, Exponential distributions
 
 # Logging infrastructure
 log = "0.4"
