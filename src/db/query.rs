@@ -242,7 +242,7 @@ impl QueryExecutor {
     fn execute_simple(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
         log::debug!("Executing simple query: {}", query);
 
-        match self.connection.client_mut().query(query, &[]) {
+        match self.connection.client().query(query, &[]) {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -267,7 +267,7 @@ impl QueryExecutor {
 
         // Convert string parameters to proper types for query
         // Note: rust-postgres handles parameter conversion automatically
-        match self.connection.client_mut().query(query, &params) {
+        match self.connection.client().query(query, &params) {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -298,7 +298,7 @@ impl QueryExecutor {
 
             let prepare_result = self
                 .connection
-                .client_mut()
+                .client()
                 .prepare_typed(query, &[]);
 
             if let Err(e) = prepare_result {
@@ -320,7 +320,7 @@ impl QueryExecutor {
         // Note: rust-postgres doesn't use statement names the same way as libpq
         // Instead, it uses Statement objects. For simplicity, we'll just use
         // the query directly with parameters, which is equivalent.
-        match self.connection.client_mut().query(query, &params) {
+        match self.connection.client().query(query, &params) {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -341,7 +341,7 @@ impl QueryExecutor {
     pub fn execute_update(&mut self, query: &str) -> PgBenchResult<u64> {
         log::debug!("Executing update: {}", query);
 
-        match self.connection.client_mut().execute(query, &[]) {
+        match self.connection.client().execute(query, &[]) {
             Ok(count) => Ok(count),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);

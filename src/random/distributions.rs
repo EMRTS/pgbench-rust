@@ -2,7 +2,6 @@
 // Reference: original-source/pgbench.c lines 1140-1266
 
 use crate::random::prng::Xoroshiro128StarStar;
-use rand::RngCore;
 
 // Constants matching original pgbench
 pub const MIN_GAUSSIAN_PARAM: f64 = 2.0;
@@ -22,7 +21,11 @@ pub fn random_uniform(rng: &mut Xoroshiro128StarStar, min: i64, max: i64) -> i64
         return min;
     }
 
-    rng.gen_range(min, max)
+    // Convert to unsigned for gen_range, then convert back
+    // This handles negative numbers correctly
+    let range = (max - min + 1) as u64;
+    let value = rng.gen_range(0, range - 1);
+    min + value as i64
 }
 
 /// Generate an exponentially distributed random integer in the range [min, max] inclusive.
