@@ -6,9 +6,11 @@
 use crate::db::connection::PgBenchConnection;
 use crate::db::query::QueryMode;
 use crate::error::{PgBenchError, PgBenchResult};
-use crate::worker::state::{ClientState, StatsData, ThreadState};
+use crate::script::{parse_script, BuiltinScript, ScriptExecutor};
+use crate::worker::state::{ClientState, ConnectionState, StatsData, ThreadState};
 use std::sync::{Arc, Barrier};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 /// Thread pool manager for benchmark execution
 ///
@@ -231,11 +233,137 @@ fn thread_worker(
     // Mark benchmark start time
     thread_state.start_benchmark();
 
-    // TODO: Phase 7.3 - Execute benchmark loop here
-    // For now, we just return the initialized state
+    // Parse the default TPC-B script (for now, hardcode to default script)
+    // TODO: Support multiple scripts and script selection
+    let builtin = BuiltinScript::get("tpcb-like")
+        .ok_or_else(|| PgBenchError::ConfigError("TPC-B script not found".to_string()))?;
+
+    let commands = parse_script(builtin.script)
+        .map_err(|e| PgBenchError::ConfigError(format!("Failed to parse script: {}", e)))?;
+
+    log::debug!("Thread {} parsed script with {} commands", thread_id, commands.len());
+
+    // Main benchmark loop
+    // Run until all clients are finished
+    // TODO: Add support for time limit (-T flag)
+    // TODO: Add support for transaction limit (-t flag) - for now run indefinitely
+    const MAX_TRANSACTIONS_PER_CLIENT: u64 = 10; // Temporary limit for testing
+
+    while !thread_state.all_clients_finished() {
+        // Process each client
+        for client_idx in 0..thread_state.num_clients() {
+            let client = &mut thread_state.clients[client_idx];
+
+            // Skip if client is already finished or aborted
+            if matches!(client.state, ConnectionState::Finished | ConnectionState::Aborted) {
+                continue;
+            }
+
+            // Check if client has reached transaction limit (temporary)
+            if client.transaction_count >= MAX_TRANSACTIONS_PER_CLIENT {
+                client.state = ConnectionState::Finished;
+                continue;
+            }
+
+            // Process client state machine
+            match client.state {
+                ConnectionState::ChooseScript => {
+                    // Initialize variables for the script
+                    // TODO: Initialize script-specific variables (scale, etc.)
+
+                    // Start transaction
+                    client.start_transaction();
+                    client.script_index = 0;
+                    client.command_index = 0;
+                    client.state = ConnectionState::ExecuteCommand;
+
+                    log::trace!("Client {} starting transaction {}", client.id, client.transaction_count + 1);
+                }
+
+                ConnectionState::ExecuteCommand => {
+                    // Execute current command
+                    if client.command_index >= commands.len() {
+                        // All commands executed, end transaction
+                        client.state = ConnectionState::EndTransaction;
+                        continue;
+                    }
+
+                    let command = &commands[client.command_index];
+
+                    match ScriptExecutor::execute(command, client) {
+                        Ok(_) => {
+                            // Command executed successfully, move to next
+                            client.command_index += 1;
+                        }
+                        Err(e) => {
+                            // Command failed
+                            log::warn!("Client {} command failed: {}", client.id, e);
+
+                            // TODO: Check if error is retryable (serialization, deadlock)
+                            // For now, just abort the transaction
+                            client.state = ConnectionState::Aborted;
+                            thread_state.stats.record_failed(false, false);
+                        }
+                    }
+                }
+
+                ConnectionState::Sleep => {
+                    // Check if sleep time has elapsed
+                    if !client.should_sleep() {
+                        client.sleep_until = None;
+                        client.state = ConnectionState::ExecuteCommand;
+                    }
+                }
+
+                ConnectionState::Throttle => {
+                    // TODO: Implement throttling logic (--rate flag)
+                    // For now, just move to next state
+                    client.state = ConnectionState::ExecuteCommand;
+                }
+
+                ConnectionState::EndTransaction => {
+                    // Transaction completed successfully
+                    if let Some(latency_us) = client.end_transaction() {
+                        thread_state.stats.record_transaction(latency_us);
+                        client.transaction_count += 1;
+
+                        log::trace!(
+                            "Client {} completed transaction {} in {} μs",
+                            client.id,
+                            client.transaction_count,
+                            latency_us
+                        );
+                    }
+
+                    // Reset for next transaction
+                    client.state = ConnectionState::ChooseScript;
+                    client.tries = 0;
+                }
+
+                ConnectionState::Aborted => {
+                    // Transaction aborted, reset and try again
+                    log::debug!("Client {} transaction aborted, resetting", client.id);
+                    client.state = ConnectionState::ChooseScript;
+                    client.tries = 0;
+                    client.txn_begin = None;
+                }
+
+                ConnectionState::Finished => {
+                    // Client is done (shouldn't reach here due to continue above)
+                    continue;
+                }
+            }
+        }
+
+        // Small sleep to avoid busy-waiting
+        // TODO: Make this more efficient with proper event handling
+        std::thread::sleep(Duration::from_micros(100));
+    }
+
     log::info!(
-        "Thread {} initialized successfully (benchmark execution not yet implemented)",
-        thread_id
+        "Thread {} completed: {} total transactions",
+        thread_id,
+        thread_state.total_transactions()
     );
 
     Ok(thread_state)
