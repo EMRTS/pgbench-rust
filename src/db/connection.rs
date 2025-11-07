@@ -37,10 +37,10 @@ impl PgBenchConnection {
     ///
     /// # Examples
     /// ```no_run
-    /// use pgbench::db::connection::PgBenchConnection;
+    /// use pgbench_rust::db::connection::PgBenchConnection;
     ///
     /// let conn = PgBenchConnection::connect("postgres://localhost/test")?;
-    /// # Ok::<(), pgbench::error::PgBenchError>(())
+    /// # Ok::<(), pgbench_rust::error::PgBenchError>(())
     /// ```
     pub fn connect(connection_string: &str) -> PgBenchResult<Self> {
         // Validate connection string is not empty
@@ -153,7 +153,7 @@ impl PgBenchConnection {
     /// # Example
     /// ```no_run
     /// use std::io::Write;
-    /// # use pgbench::db::connection::PgBenchConnection;
+    /// # use pgbench_rust::db::connection::PgBenchConnection;
     /// # let mut conn = PgBenchConnection::connect("postgres://localhost/test")?;
     /// let mut writer = conn.copy_in("COPY my_table FROM STDIN")?;
     /// writer.write_all(b"1\t2\t3\n")?;
