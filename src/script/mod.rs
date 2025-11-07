@@ -9,9 +9,4 @@ pub mod executor;
 
 pub use builtin::BuiltinScript;
 pub use parser::parse_script;
-pub use executor::execute_script;
-
-// TODO: Implement script parser
-// TODO: Implement meta-command support (\set, \sleep, etc.)
-// TODO: Implement conditional execution (\if, \elif, \else, \endif)
-// TODO: Implement pipeline mode (\startpipeline, \endpipeline)
+pub use executor::ScriptExecutor;
