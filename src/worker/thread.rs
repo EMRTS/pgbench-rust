@@ -72,6 +72,7 @@ impl ThreadPool {
     /// * `connection_string` - Database connection string
     /// * `query_mode` - Query protocol mode
     /// * `base_seed` - Base seed for RNG (each thread gets derived seed)
+    /// * `scale` - Scale factor for pgbench (number of scale units)
     ///
     /// # Returns
     /// Self with spawned threads
@@ -80,6 +81,7 @@ impl ThreadPool {
         connection_string: String,
         query_mode: QueryMode,
         base_seed: u64,
+        scale: i64,
     ) -> PgBenchResult<Self> {
         for thread_id in 0..self.num_threads {
             // Derive unique seed for this thread
@@ -100,6 +102,7 @@ impl ThreadPool {
                         conn_str,
                         query_mode,
                         thread_seed,
+                        scale,
                         barrier,
                     )
                 })
@@ -179,6 +182,7 @@ fn thread_worker(
     connection_string: String,
     query_mode: QueryMode,
     seed: u64,
+    scale: i64,
     start_barrier: Arc<Barrier>,
 ) -> PgBenchResult<ThreadState> {
     log::debug!(
@@ -214,7 +218,10 @@ fn thread_worker(
             })?;
 
         // Create client state
-        let client = ClientState::new(global_client_id, connection, query_mode, client_seed);
+        let mut client = ClientState::new(global_client_id, connection, query_mode, client_seed);
+
+        // Initialize standard pgbench variables
+        client.initialize_standard_variables(scale, client_seed);
 
         thread_state.add_client(client);
     }

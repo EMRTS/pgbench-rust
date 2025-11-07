@@ -269,6 +269,20 @@ impl ClientState {
         self.variables.get(name)
     }
 
+    /// Initialize standard pgbench variables
+    ///
+    /// Sets up the standard variables that pgbench scripts expect:
+    /// - :client_id - The client ID (0-based)
+    /// - :random_seed - The random seed for this client
+    /// - :scale - The scale factor (defaults to 1 if not provided)
+    ///
+    /// Reference: pgbench.c initVariables() (lines 2938-2974)
+    pub fn initialize_standard_variables(&mut self, scale: i64, random_seed: u64) {
+        self.set_variable("client_id".to_string(), PgBenchValue::int(self.id as i64));
+        self.set_variable("random_seed".to_string(), PgBenchValue::int(random_seed as i64));
+        self.set_variable("scale".to_string(), PgBenchValue::int(scale));
+    }
+
     /// Start a new transaction
     pub fn start_transaction(&mut self) {
         self.txn_begin = Some(Instant::now());
