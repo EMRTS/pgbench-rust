@@ -5,7 +5,10 @@
 //! Reference: original-source/pgbench.c lines 2100-2858
 
 use crate::error::{PgBenchError, PgBenchResult};
-use crate::types::{PgBenchExpr, PgBenchValue, PgBenchFunction};
+use crate::random::distributions::{random_exponential, random_gaussian, random_uniform, random_zipfian};
+use crate::random::prng::Xoroshiro128StarStar;
+use crate::types::{PgBenchExpr, PgBenchFunction, PgBenchValue};
+use rand::RngCore;
 use std::collections::HashMap;
 
 /// Context for expression evaluation
@@ -50,6 +53,7 @@ impl Default for EvalContext {
 pub fn evaluate_expression(
     expr: &PgBenchExpr,
     context: &mut EvalContext,
+    rng: &mut Xoroshiro128StarStar,
 ) -> PgBenchResult<PgBenchValue> {
     match expr {
         // Constants: return the value directly
@@ -62,7 +66,7 @@ pub fn evaluate_expression(
 
         // Functions and operators
         PgBenchExpr::Function { function, args } => {
-            evaluate_function(*function, args, context)
+            evaluate_function(*function, args, context, rng)
         }
     }
 }
@@ -74,10 +78,11 @@ fn evaluate_function(
     func: PgBenchFunction,
     args: &[PgBenchExpr],
     context: &mut EvalContext,
+    rng: &mut Xoroshiro128StarStar,
 ) -> PgBenchResult<PgBenchValue> {
     // Special handling for lazy evaluation (AND, OR, CASE)
     if is_lazy_function(func) {
-        return evaluate_lazy_function(func, args, context);
+        return evaluate_lazy_function(func, args, context, rng);
     }
 
     // Evaluate all arguments eagerly for non-lazy functions
@@ -85,7 +90,7 @@ fn evaluate_function(
     let mut has_null = false;
 
     for arg in args {
-        let val = evaluate_expression(arg, context)?;
+        let val = evaluate_expression(arg, context, rng)?;
         has_null |= val.is_null();
         arg_values.push(val);
     }
@@ -97,7 +102,7 @@ fn evaluate_function(
     }
 
     // Dispatch to specific function implementation
-    evaluate_standard_function(func, &arg_values)
+    evaluate_standard_function(func, &arg_values, rng)
 }
 
 /// Check if a function uses lazy evaluation
@@ -118,6 +123,7 @@ fn evaluate_lazy_function(
     func: PgBenchFunction,
     args: &[PgBenchExpr],
     context: &mut EvalContext,
+    rng: &mut Xoroshiro128StarStar,
 ) -> PgBenchResult<PgBenchValue> {
     match func {
         PgBenchFunction::And => {
@@ -127,7 +133,7 @@ fn evaluate_lazy_function(
                 return Err(PgBenchError::invalid_function_args("AND", 2, args.len()));
             }
 
-            let a1 = evaluate_expression(&args[0], context)?;
+            let a1 = evaluate_expression(&args[0], context, rng)?;
             if a1.is_null() {
                 return Ok(PgBenchValue::null());
             }
@@ -137,7 +143,7 @@ fn evaluate_lazy_function(
                 return Ok(PgBenchValue::boolean(false));
             }
 
-            let a2 = evaluate_expression(&args[1], context)?;
+            let a2 = evaluate_expression(&args[1], context, rng)?;
             if a2.is_null() {
                 return Ok(PgBenchValue::null());
             }
@@ -153,7 +159,7 @@ fn evaluate_lazy_function(
                 return Err(PgBenchError::invalid_function_args("OR", 2, args.len()));
             }
 
-            let a1 = evaluate_expression(&args[0], context)?;
+            let a1 = evaluate_expression(&args[0], context, rng)?;
             if a1.is_null() {
                 return Ok(PgBenchValue::null());
             }
@@ -163,7 +169,7 @@ fn evaluate_lazy_function(
                 return Ok(PgBenchValue::boolean(true));
             }
 
-            let a2 = evaluate_expression(&args[1], context)?;
+            let a2 = evaluate_expression(&args[1], context, rng)?;
             if a2.is_null() {
                 return Ok(PgBenchValue::null());
             }
@@ -184,16 +190,16 @@ fn evaluate_lazy_function(
 
             // Iterate through condition/result pairs
             for i in (0..args.len() - 1).step_by(2) {
-                let cond = evaluate_expression(&args[i], context)?;
+                let cond = evaluate_expression(&args[i], context, rng)?;
 
                 // Check if condition is true (not NULL and coerces to true)
                 if !cond.is_null() && cond.coerce_to_bool()? {
-                    return evaluate_expression(&args[i + 1], context);
+                    return evaluate_expression(&args[i + 1], context, rng);
                 }
             }
 
             // No condition was true, return else result (last arg)
-            evaluate_expression(&args[args.len() - 1], context)
+            evaluate_expression(&args[args.len() - 1], context, rng)
         }
 
         _ => Err(PgBenchError::ExpressionEvalError(
@@ -209,6 +215,7 @@ fn evaluate_lazy_function(
 fn evaluate_standard_function(
     func: PgBenchFunction,
     args: &[PgBenchValue],
+    rng: &mut Xoroshiro128StarStar,
 ) -> PgBenchResult<PgBenchValue> {
     match func {
         // ===== Arithmetic Operators =====
@@ -375,14 +382,44 @@ fn evaluate_standard_function(
             Ok(args[0].clone())
         }
 
-        // ===== Not Yet Implemented Functions =====
-        PgBenchFunction::Random |
-        PgBenchFunction::RandomGaussian |
-        PgBenchFunction::RandomExponential |
+        // ===== Random Functions =====
+        PgBenchFunction::Random => {
+            // random(min, max) - generate random integer in [min, max]
+            check_arg_count("random", 2, args.len())?;
+            let min = args[0].coerce_to_int()?;
+            let max = args[1].coerce_to_int()?;
+            let value = random_uniform(rng, min, max);
+            Ok(PgBenchValue::int(value))
+        }
+
+        PgBenchFunction::RandomGaussian => {
+            // random_gaussian(min, max, parameter) - Gaussian distribution
+            check_arg_count("random_gaussian", 3, args.len())?;
+            let min = args[0].coerce_to_int()?;
+            let max = args[1].coerce_to_int()?;
+            let parameter = args[2].coerce_to_double()?;
+            let value = random_gaussian(rng, min, max, parameter);
+            Ok(PgBenchValue::int(value))
+        }
+
+        PgBenchFunction::RandomExponential => {
+            // random_exponential(min, max, parameter) - Exponential distribution
+            check_arg_count("random_exponential", 3, args.len())?;
+            let min = args[0].coerce_to_int()?;
+            let max = args[1].coerce_to_int()?;
+            let parameter = args[2].coerce_to_double()?;
+            let value = random_exponential(rng, min, max, parameter);
+            Ok(PgBenchValue::int(value))
+        }
+
         PgBenchFunction::RandomZipfian => {
-            Err(PgBenchError::ExpressionEvalError(
-                format!("Random function {:?} not yet implemented (requires PRNG)", func)
-            ))
+            // random_zipfian(min, max, parameter) - Zipfian distribution
+            check_arg_count("random_zipfian", 3, args.len())?;
+            let min = args[0].coerce_to_int()?;
+            let max = args[1].coerce_to_int()?;
+            let parameter = args[2].coerce_to_double()?;
+            let value = random_zipfian(rng, min, max, parameter);
+            Ok(PgBenchValue::int(value))
         }
 
         PgBenchFunction::HashMurmur2 |
@@ -627,6 +664,8 @@ fn least_greatest_func(args: &[PgBenchValue], is_least: bool) -> PgBenchResult<P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::random::prng::Xoroshiro128StarStar;
+    use rand::SeedableRng;
 
     // Helper to create context with variables
     fn context_with_vars(vars: &[(&str, i64)]) -> EvalContext {
@@ -637,11 +676,16 @@ mod tests {
         ctx
     }
 
+    // Helper to create RNG for tests
+    fn test_rng() -> Xoroshiro128StarStar {
+        Xoroshiro128StarStar::seed_from_u64(42)
+    }
+
     #[test]
     fn test_eval_constant() {
         let mut ctx = EvalContext::new();
         let expr = PgBenchExpr::Constant(PgBenchValue::int(42));
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 42);
     }
 
@@ -649,7 +693,7 @@ mod tests {
     fn test_eval_variable() {
         let mut ctx = context_with_vars(&[("x", 10)]);
         let expr = PgBenchExpr::Variable { name: "x".to_string() };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 10);
     }
 
@@ -657,7 +701,7 @@ mod tests {
     fn test_eval_variable_not_found() {
         let mut ctx = EvalContext::new();
         let expr = PgBenchExpr::Variable { name: "x".to_string() };
-        let result = evaluate_expression(&expr, &mut ctx);
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng());
         assert!(result.is_err());
     }
 
@@ -671,7 +715,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(20)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 30);
     }
 
@@ -685,7 +729,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(42)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 58);
     }
 
@@ -699,7 +743,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(7)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 42);
     }
 
@@ -713,7 +757,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(5)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 20);
     }
 
@@ -727,7 +771,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(0)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx);
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng());
         assert!(result.is_err());
     }
 
@@ -741,7 +785,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(3)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 1);
     }
 
@@ -755,7 +799,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(10)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), true);
     }
 
@@ -769,7 +813,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(42)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), true);
     }
 
@@ -784,7 +828,7 @@ mod tests {
                 PgBenchExpr::Variable { name: "undefined".to_string() },
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), false);
     }
 
@@ -799,7 +843,7 @@ mod tests {
                 PgBenchExpr::Variable { name: "undefined".to_string() },
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), true);
     }
 
@@ -812,7 +856,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::boolean(true)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), false);
     }
 
@@ -826,7 +870,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(3)),  // 0011
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 1);  // 0001
     }
 
@@ -840,7 +884,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(3)),  // 0011
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 7);  // 0111
     }
 
@@ -854,7 +898,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(3)),  // 0011
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 6);  // 0110
     }
 
@@ -868,7 +912,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(2)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 20);
     }
 
@@ -882,7 +926,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(2)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 5);
     }
 
@@ -896,7 +940,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::null()),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_bool().unwrap(), true);
     }
 
@@ -909,7 +953,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(-42)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 42);
     }
 
@@ -922,7 +966,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::double(16.0)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert!((result.as_double().unwrap() - 4.0).abs() < 0.001);
     }
 
@@ -936,7 +980,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(10)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert!((result.as_double().unwrap() - 1024.0).abs() < 0.001);
     }
 
@@ -951,7 +995,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(8)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 2);
     }
 
@@ -966,7 +1010,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(8)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 8);
     }
 
@@ -984,7 +1028,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(3)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 1);
     }
 
@@ -1000,7 +1044,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(2)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert_eq!(result.as_int().unwrap(), 2);
     }
 
@@ -1015,7 +1059,7 @@ mod tests {
                 PgBenchExpr::Constant(PgBenchValue::int(10)),
             ],
         };
-        let result = evaluate_expression(&expr, &mut ctx).unwrap();
+        let result = evaluate_expression(&expr, &mut ctx, &mut test_rng()).unwrap();
         assert!(result.is_null());
     }
 }

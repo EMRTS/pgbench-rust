@@ -101,7 +101,7 @@ impl ScriptExecutor {
         }
 
         // Evaluate the expression
-        let value = evaluate_expression(&expr, &mut context)?;
+        let value = evaluate_expression(&expr, &mut context, &mut client.func_rng)?;
 
         // Set the variable
         client.set_variable(variable.to_string(), value.clone());
@@ -217,7 +217,7 @@ impl ScriptExecutor {
         }
 
         // Evaluate condition as boolean
-        let value = evaluate_expression(condition, &mut context)?;
+        let value = evaluate_expression(condition, &mut context, &mut client.func_rng)?;
         let result = value.coerce_to_bool()?;
 
         log::debug!("Client {}: \\if condition = {}", client.id, result);
@@ -242,7 +242,7 @@ impl ScriptExecutor {
         }
 
         // Evaluate condition as boolean
-        let value = evaluate_expression(condition, &mut context)?;
+        let value = evaluate_expression(condition, &mut context, &mut client.func_rng)?;
         let result = value.coerce_to_bool()?;
 
         log::debug!("Client {}: \\elif condition = {}", client.id, result);
