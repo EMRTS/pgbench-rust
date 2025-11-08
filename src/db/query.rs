@@ -1,9 +1,10 @@
-// Query execution utilities
+// Query execution utilities (async)
 // Reference: original-source/pgbench.c lines 3182-3261 (sendCommand, error handling)
+// Migrated to tokio-postgres for async operations (Phase 9.2)
 
 use crate::db::connection::PgBenchConnection;
 use crate::error::{PgBenchError, PgBenchResult};
-use postgres::{Error as PgError, Row};
+use tokio_postgres::{Error as PgError, Row};
 use std::collections::HashMap;
 
 /// Query protocol mode (matches pgbench -M flag)
@@ -196,19 +197,19 @@ impl QueryExecutor {
         &mut self.connection
     }
 
-    /// Execute a query with no parameters, returning rows
+    /// Execute a query with no parameters, returning rows (async)
     ///
     /// Uses the configured query mode (simple, extended, or prepared).
     /// Reference: pgbench.c sendCommand() (lines 3183-3231)
-    pub fn execute(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
-        self.execute_with_params(query, &[])
+    pub async fn execute(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
+        self.execute_with_params(query, &[]).await
     }
 
-    /// Execute a query with parameters, returning rows
+    /// Execute a query with parameters, returning rows (async)
     ///
     /// Parameters are provided as strings (will be converted by PostgreSQL).
     /// Uses the configured query mode (simple, extended, or prepared).
-    pub fn execute_with_params(
+    pub async fn execute_with_params(
         &mut self,
         query: &str,
         params: &[&str],
@@ -218,29 +219,29 @@ impl QueryExecutor {
                 // Simple protocol: substitute parameters into query string
                 // This is less safe but matches original pgbench behavior
                 if params.is_empty() {
-                    self.execute_simple(query)
+                    self.execute_simple(query).await
                 } else {
                     // For simple mode with params, we need to interpolate them
                     // This is a simplified version - real implementation would need
                     // proper variable substitution from the script executor
-                    self.execute_simple(query)
+                    self.execute_simple(query).await
                 }
             }
             QueryMode::Extended => {
                 // Extended protocol: use parameterized query
-                self.execute_extended(query, params)
+                self.execute_extended(query, params).await
             }
             QueryMode::Prepared => {
                 // Prepared protocol: prepare once, execute many times
-                self.execute_prepared(query, params)
+                self.execute_prepared(query, params).await
             }
         }
     }
 
-    /// Execute using simple protocol (text-based, no parameters)
+    /// Execute using simple protocol (text-based, no parameters) - async
     ///
     /// Reference: pgbench.c PQsendQuery() usage
-    fn execute_simple(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
+    async fn execute_simple(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
         let trimmed = query.trim();
         log::debug!("Executing simple query: {}", trimmed);
 
@@ -252,7 +253,7 @@ impl QueryExecutor {
             log::warn!("!!! EXECUTING COMMIT/END !!!");
         }
 
-        match self.connection.client().query(query, &[]) {
+        match self.connection.client().query(query, &[]).await {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -269,17 +270,17 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute using extended protocol (binary parameters)
+    /// Execute using extended protocol (binary parameters) - async
     ///
     /// Reference: pgbench.c PQsendQueryParams() usage
-    fn execute_extended(&mut self, query: &str, params: &[&str]) -> PgBenchResult<Vec<Row>> {
+    async fn execute_extended(&mut self, query: &str, params: &[&str]) -> PgBenchResult<Vec<Row>> {
         log::debug!("Executing extended query: {} (params: {:?})", query, params);
 
         // Convert string parameters to trait objects that postgres expects
-        let params_as_trait: Vec<&(dyn postgres::types::ToSql + Sync)> =
-            params.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
+        let params_as_trait: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
 
-        match self.connection.client().query(query, &params_as_trait) {
+        match self.connection.client().query(query, &params_as_trait).await {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -296,11 +297,11 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute using prepared statement protocol
+    /// Execute using prepared statement protocol - async
     ///
     /// Prepares the statement on first use, then executes prepared statement.
     /// Reference: pgbench.c prepareCommand() and PQsendQueryPrepared()
-    fn execute_prepared(&mut self, query: &str, params: &[&str]) -> PgBenchResult<Vec<Row>> {
+    async fn execute_prepared(&mut self, query: &str, params: &[&str]) -> PgBenchResult<Vec<Row>> {
         // Get or create prepared statement name
         let (stmt_name, is_new) = self.prepared_cache.get_or_create(query);
 
@@ -311,7 +312,8 @@ impl QueryExecutor {
             let prepare_result = self
                 .connection
                 .client()
-                .prepare_typed(query, &[]);
+                .prepare_typed(query, &[])
+                .await;
 
             if let Err(e) = prepare_result {
                 return Err(PgBenchError::QueryError(format!(
@@ -329,14 +331,14 @@ impl QueryExecutor {
         );
 
         // Convert string parameters to trait objects that postgres expects
-        let params_as_trait: Vec<&(dyn postgres::types::ToSql + Sync)> =
-            params.iter().map(|s| s as &(dyn postgres::types::ToSql + Sync)).collect();
+        let params_as_trait: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|s| s as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
 
         // Execute the prepared statement
-        // Note: rust-postgres doesn't use statement names the same way as libpq
+        // Note: tokio-postgres doesn't use statement names the same way as libpq
         // Instead, it uses Statement objects. For simplicity, we'll just use
         // the query directly with parameters, which is equivalent.
-        match self.connection.client().query(query, &params_as_trait) {
+        match self.connection.client().query(query, &params_as_trait).await {
             Ok(rows) => Ok(rows),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);
@@ -353,11 +355,11 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute a query and return the number of affected rows
-    pub fn execute_update(&mut self, query: &str) -> PgBenchResult<u64> {
+    /// Execute a query and return the number of affected rows - async
+    pub async fn execute_update(&mut self, query: &str) -> PgBenchResult<u64> {
         log::debug!("Executing update: {}", query);
 
-        match self.connection.client().execute(query, &[]) {
+        match self.connection.client().execute(query, &[]).await {
             Ok(count) => Ok(count),
             Err(e) => {
                 let status = ErrorStatus::from_pg_error(&e);

@@ -11,9 +11,12 @@ keywords = ["postgresql", "benchmark", "database", "performance"]
 categories = ["command-line-utilities", "database"]
 
 [dependencies]
-# Database connectivity - PostgreSQL client
-postgres = "0.19"
-# Alternative: tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+# Database connectivity - PostgreSQL client (async)
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+tokio = { version = "1.40", features = ["full"] }
+bytes = "1.7"  # Required for tokio-postgres CopyInSink
+# Note: Migrated from postgres = "0.19" to tokio-postgres for async operations
+# This fixes multi-client single-thread deadlock issue (see PLAN.md Phase 9.2)
 
 # Command-line interface
 clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
