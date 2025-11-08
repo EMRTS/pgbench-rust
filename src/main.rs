@@ -20,17 +20,20 @@ mod worker;
 use db::connection::PgBenchConnection;
 use db::query::QueryMode;
 use error::PgBenchResult;
-use stats::{print_latency_details, print_results};
+use stats::{print_latency_details, print_results, print_summary};
 use worker::{aggregate_stats, BenchmarkConfig, ThreadPool};
 
 fn main() -> Result<()> {
-    // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
-    // Parse command-line arguments
+    // Parse command-line arguments first (to check debug flag)
     let args = cli::Args::parse_args()?;
 
-    info!("pgbench-rust starting");
+    // Initialize logging based on debug flag
+    let log_level = if args.debug { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    if !args.quiet {
+        info!("pgbench-rust starting");
+    }
 
     // Run in appropriate mode
     if args.initialize {
@@ -60,6 +63,20 @@ fn run_initialize_mode(args: &cli::Args) -> PgBenchResult<()> {
 fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     info!("Running benchmark...");
     info!("Clients: {}, Threads: {}", args.clients, args.jobs);
+
+    // Run VACUUM before benchmark unless --no-vacuum is specified
+    if !args.no_vacuum {
+        info!("Vacuuming tables before benchmark...");
+        let mut conn = PgBenchConnection::connect(&args.connection)?;
+
+        // VACUUM cannot run inside a transaction block
+        conn.execute("VACUUM ANALYZE pgbench_branches", &[])?;
+        conn.execute("VACUUM ANALYZE pgbench_tellers", &[])?;
+        conn.execute("VACUUM ANALYZE pgbench_accounts", &[])?;
+        conn.execute("VACUUM ANALYZE pgbench_history", &[])?;
+
+        info!("VACUUM complete");
+    }
 
     // Parse query mode
     let query_mode = QueryMode::from_str(&args.protocol).ok_or_else(|| {
@@ -118,28 +135,33 @@ fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     // Aggregate statistics from all threads
     let total_stats = aggregate_stats(&threads);
 
-    // Determine script name for reporting
-    let script_name = args
-        .builtin
-        .as_ref()
-        .map(|b| format!("<builtin: {}>", b))
-        .unwrap_or_else(|| "<builtin: TPC-B (sort of)>".to_string());
-
-    // Print results
+    // Print results based on quiet mode
     println!();
-    print_results(
-        &total_stats,
-        args.clients,
-        args.jobs,
-        benchmark_duration,
-        args.scale as i64,
-        query_mode.as_str(),
-        &script_name,
-    );
+    if args.quiet {
+        // Quiet mode: just show transaction count and TPS
+        print_summary(&total_stats, benchmark_duration);
+    } else {
+        // Normal mode: show full results
+        let script_name = args
+            .builtin
+            .as_ref()
+            .map(|b| format!("<builtin: {}>", b))
+            .unwrap_or_else(|| "<builtin: TPC-B (sort of)>".to_string());
 
-    // Print latency details if enabled and requested
-    if args.report_latencies && !total_stats.latencies.is_empty() {
-        print_latency_details(&total_stats);
+        print_results(
+            &total_stats,
+            args.clients,
+            args.jobs,
+            benchmark_duration,
+            args.scale as i64,
+            query_mode.as_str(),
+            &script_name,
+        );
+
+        // Print latency details if enabled and requested
+        if args.report_latencies && !total_stats.latencies.is_empty() {
+            print_latency_details(&total_stats);
+        }
     }
 
     Ok(())
