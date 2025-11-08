@@ -164,6 +164,17 @@ impl Args {
             anyhow::bail!("Number of threads must not exceed number of clients");
         }
 
+        // TEMPORARY LIMITATION: Warn about multiple clients per thread
+        // This is due to using synchronous postgres operations which can deadlock
+        // when multiple clients on the same thread compete for locks.
+        // TODO: Remove this once we migrate to async operations (tokio-postgres)
+        if self.jobs < self.clients && !self.initialize {
+            log::warn!("WARNING: Running {} clients on {} threads", self.clients, self.jobs);
+            log::warn!("         This configuration may deadlock due to synchronous database operations.");
+            log::warn!("         If the program hangs, use -j {} (one thread per client) as a workaround.", self.clients);
+            log::warn!("         Async operations will be implemented in v1.0.0 to fix this properly.");
+        }
+
         // Check scale factor
         if self.scale < 1 {
             anyhow::bail!("Scale factor must be at least 1");
