@@ -7,6 +7,7 @@ use crate::db::connection::PgBenchConnection;
 use crate::db::query::QueryMode;
 use crate::error::{PgBenchError, PgBenchResult};
 use crate::script::{parse_script, BuiltinScript, ScriptExecutor};
+use crate::types::Command;
 use crate::worker::state::{ClientState, ConnectionState, StatsData, ThreadState};
 use std::sync::{Arc, Barrier};
 use std::thread::{self, JoinHandle};
@@ -298,6 +299,18 @@ fn thread_worker(
         .map_err(|e| PgBenchError::ConfigError(format!("Failed to parse script: {}", e)))?;
 
     log::debug!("Thread {} parsed script with {} commands", thread_id, commands.len());
+
+    // Log all parsed commands for debugging
+    for (i, cmd) in commands.iter().enumerate() {
+        match cmd {
+            Command::Sql { query } => {
+                log::debug!("  Command {}: SQL: {}", i, query.trim());
+            }
+            Command::Meta(meta) => {
+                log::debug!("  Command {}: Meta: {:?}", i, meta);
+            }
+        }
+    }
 
     // Main benchmark loop
     // Run until all clients are finished or limits reached

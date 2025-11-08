@@ -429,6 +429,20 @@ mod tests {
         let script = BuiltinScript::get("tpcb-like").unwrap();
         let commands = parse_script(script.script).unwrap();
 
+        // Print all commands for debugging
+        println!("\n=== TPCB-LIKE SCRIPT COMMANDS (total: {}) ===", commands.len());
+        for (i, cmd) in commands.iter().enumerate() {
+            match cmd {
+                Command::Sql { query } => {
+                    println!("  Command {}: SQL: {}", i, query.trim());
+                }
+                Command::Meta(meta) => {
+                    println!("  Command {}: Meta: {:?}", i, meta);
+                }
+            }
+        }
+        println!("=== END ===\n");
+
         // Should have:
         // 4 \set commands
         // 1 BEGIN

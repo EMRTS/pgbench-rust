@@ -241,7 +241,16 @@ impl QueryExecutor {
     ///
     /// Reference: pgbench.c PQsendQuery() usage
     fn execute_simple(&mut self, query: &str) -> PgBenchResult<Vec<Row>> {
-        log::debug!("Executing simple query: {}", query);
+        let trimmed = query.trim();
+        log::debug!("Executing simple query: {}", trimmed);
+
+        // Extra logging for transaction control statements
+        if trimmed.eq_ignore_ascii_case("BEGIN") || trimmed.eq_ignore_ascii_case("BEGIN;") {
+            log::warn!("!!! EXECUTING BEGIN !!!");
+        } else if trimmed.eq_ignore_ascii_case("END") || trimmed.eq_ignore_ascii_case("END;")
+               || trimmed.eq_ignore_ascii_case("COMMIT") || trimmed.eq_ignore_ascii_case("COMMIT;") {
+            log::warn!("!!! EXECUTING COMMIT/END !!!");
+        }
 
         match self.connection.client().query(query, &[]) {
             Ok(rows) => Ok(rows),
