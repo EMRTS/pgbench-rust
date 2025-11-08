@@ -385,9 +385,28 @@ where
 
         for k in batch_start..batch_end {
             let row_data = generate_row(k);
-            // Parse the row and execute as INSERT
-            // This is slower than COPY but works for now
-            let insert_sql = format!("INSERT INTO {} VALUES ({})", table_name, row_data.trim());
+
+            // Convert COPY format (tab-separated) to SQL format
+            // COPY format: "1\t0\t\\N\n"
+            // SQL format: (1, 0, NULL)
+            let values = row_data
+                .trim()
+                .split('\t')
+                .map(|val| {
+                    if val == "\\N" {
+                        "NULL".to_string()
+                    } else if val.is_empty() {
+                        "''".to_string()  // Empty string
+                    } else if val.chars().all(|c| c.is_numeric() || c == '-') {
+                        val.to_string()  // Numeric value
+                    } else {
+                        format!("'{}'", val.replace('\'', "''"))  // String value, escape quotes
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let insert_sql = format!("INSERT INTO {} VALUES ({})", table_name, values);
             conn.execute(&insert_sql, &[]).await?;
         }
 
