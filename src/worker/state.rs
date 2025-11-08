@@ -171,6 +171,40 @@ impl StatsData {
         }
     }
 
+    /// Calculate percentile of latencies
+    ///
+    /// # Arguments
+    /// * `percentile` - Percentile to calculate (0.0 to 100.0)
+    ///
+    /// # Returns
+    /// Latency value at the given percentile in microseconds
+    ///
+    /// Reference: pgbench.c getPercentile() (lines 5988-6018)
+    pub fn percentile(&self, percentile: f64) -> u64 {
+        if self.latencies.is_empty() {
+            return 0;
+        }
+
+        // Sort latencies (we need to clone because we can't mutate self)
+        let mut sorted = self.latencies.clone();
+        sorted.sort_unstable();
+
+        // Calculate index (using linear interpolation like original pgbench)
+        let index = (percentile / 100.0) * (sorted.len() as f64 - 1.0);
+        let lower = index.floor() as usize;
+        let upper = index.ceil() as usize;
+
+        if lower == upper || upper >= sorted.len() {
+            sorted[lower.min(sorted.len() - 1)]
+        } else {
+            // Linear interpolation between two values
+            let fraction = index - lower as f64;
+            let lower_val = sorted[lower] as f64;
+            let upper_val = sorted[upper] as f64;
+            (lower_val + fraction * (upper_val - lower_val)) as u64
+        }
+    }
+
     /// Merge another stats object into this one
     pub fn merge(&mut self, other: &StatsData) {
         self.cnt += other.cnt;
