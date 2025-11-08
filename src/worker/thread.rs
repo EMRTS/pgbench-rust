@@ -367,8 +367,14 @@ fn thread_worker(
                             client.command_index += 1;
                         }
                         Err(e) => {
-                            // Command failed
-                            log::warn!("Client {} command failed: {}", client.id, e);
+                            // Command failed - log detailed error
+                            log::error!(
+                                "Client {} command {} failed: {:?}",
+                                client.id,
+                                client.command_index,
+                                command
+                            );
+                            log::error!("Client {} error details: {:#?}", client.id, e);
 
                             // TODO: Check if error is retryable (serialization, deadlock)
                             // For now, just abort the transaction

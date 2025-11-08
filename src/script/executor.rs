@@ -45,17 +45,69 @@ impl ScriptExecutor {
     fn execute_sql(sql: &str, client: &mut ClientState) -> PgBenchResult<bool> {
         log::debug!("Client {}: Executing SQL: {}", client.id, sql);
 
-        // TODO: Variable substitution in SQL
-        // For now, execute SQL as-is
-        // Full variable substitution will be implemented when needed
+        // Perform variable substitution
+        let substituted_sql = Self::substitute_variables(sql, client)?;
+
+        log::debug!("Client {}: After substitution: {}", client.id, substituted_sql);
 
         // Execute the query
         client
             .executor
-            .execute(sql)
-            .map_err(|e| PgBenchError::QueryError(format!("SQL execution failed: {}", e)))?;
+            .execute(&substituted_sql)
+            .map_err(|e| {
+                PgBenchError::QueryError(format!(
+                    "SQL execution failed for query '{}': {}",
+                    substituted_sql, e
+                ))
+            })?;
 
         Ok(true)
+    }
+
+    /// Substitute variables in SQL query
+    ///
+    /// Replaces :varname with the actual value from client variables
+    /// Reference: pgbench.c replaceVariable() lines 5312-5378
+    fn substitute_variables(sql: &str, client: &ClientState) -> PgBenchResult<String> {
+        use regex::Regex;
+
+        // Match :varname pattern (alphanumeric and underscore)
+        let re = Regex::new(r":([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+
+        let mut result = sql.to_string();
+
+        // Find all variable references and replace them
+        for cap in re.captures_iter(sql) {
+            let var_name = &cap[1];
+            let placeholder = &cap[0]; // :varname
+
+            // Look up variable value
+            let value = client.get_variable(var_name)
+                .ok_or_else(|| {
+                    PgBenchError::VariableNotFound(format!(
+                        "Variable '{}' not found in SQL: {}",
+                        var_name, sql
+                    ))
+                })?;
+
+            // Convert value to SQL literal
+            let sql_literal = match &value.value {
+                crate::types::PgBenchValueData::Int(i) => i.to_string(),
+                crate::types::PgBenchValueData::Double(d) => d.to_string(),
+                crate::types::PgBenchValueData::Boolean(b) => b.to_string(),
+                crate::types::PgBenchValueData::Null => "NULL".to_string(),
+                crate::types::PgBenchValueData::NoValue => {
+                    return Err(PgBenchError::ExpressionEvalError(
+                        format!("Variable '{}' has no value", var_name)
+                    ))
+                }
+            };
+
+            // Replace this occurrence
+            result = result.replace(placeholder, &sql_literal);
+        }
+
+        Ok(result)
     }
 
     /// Execute a meta-command
