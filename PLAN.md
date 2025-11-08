@@ -3,9 +3,15 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-08 (Main.rs Complete - End-to-end execution ready!)
-**Current Phase**: Integration Testing & Polish
-**Status**: Phases 1-8 Complete (✅), Core Functionality Ready (✅), Phase 9-10 Remaining
+**Last Updated**: 2025-11-08 (v0.8.1 - Transaction lock bug fixed!)
+**Current Version**: v0.8.1
+**Current Phase**: Bug Fixes & Async Migration (v0.9.0)
+**Status**: Phases 1-8 Complete (✅), Core Functionality Ready (✅), **Critical Bug Found** ⚠️
+
+**⚠️ Known Issues:**
+- Multi-client single-thread hangs due to synchronous database operations
+- Workaround: Use `-j N` where N equals number of clients
+- Fix planned: Migrate to async operations (Phase 9.2) for v0.9.0
 
 ---
 
@@ -817,7 +823,7 @@ File: `src/stats/reporter.rs`
 
 ---
 
-## Phase 9: Advanced Features
+## Phase 9: Advanced Features & Critical Fixes
 
 **Status**: Not Started
 **Dependencies**: Phase 8 complete
@@ -829,7 +835,37 @@ File: `src/stats/reporter.rs`
 - [ ] Report latencies (--report-latencies)
 - [ ] Test all options
 
-### 9.2 Performance Optimization 🔲
+### 9.2 Async Database Operations 🔲 **CRITICAL**
+**Priority**: HIGH - Required for proper multi-client-per-thread support
+
+**Problem**: Current synchronous `postgres` crate blocks the thread on each query,
+causing deadlocks when multiple clients on one thread compete for database locks.
+
+**Solution**: Migrate to `tokio-postgres` (async/await)
+
+Tasks:
+- [ ] Replace `postgres` with `tokio-postgres` in Cargo.toml
+- [ ] Convert `PgBenchConnection` to use async Client
+- [ ] Convert `QueryExecutor` methods to async (async fn)
+- [ ] Update worker thread loop to use async runtime (tokio::spawn)
+- [ ] Implement proper async task scheduling for multiple clients per thread
+- [ ] Use `PQsendQuery`/`PQgetResult` pattern from original pgbench:
+  - Send queries asynchronously without waiting
+  - Poll for results in event loop
+  - Process ready clients while others wait for I/O
+- [ ] Test multi-client single-thread configuration (-c 10 -j 1)
+- [ ] Remove temporary warning from cli.rs once fixed
+- [ ] Update tests to work with async operations
+
+**Reference**: Original pgbench.c uses PQsendQuery() + PQgetResult() (non-blocking)
+See: pgbench.c lines 3196, 3207, 3218, 3284, 3291
+
+**Acceptance Criteria**:
+- ✅ `-c 10 -j 1 -t 100` completes without deadlock
+- ✅ Performance matches or exceeds synchronous version
+- ✅ All existing tests pass
+
+### 9.3 Performance Optimization 🔲
 - [ ] Profile hot paths
 - [ ] Optimize expression evaluation
 - [ ] Optimize RNG
@@ -872,25 +908,34 @@ File: `tests/compatibility_test.rs`
 
 ---
 
-## Immediate Next Steps
+## Immediate Next Steps (v0.9.0)
 
-1. **Wire up main.rs** (HIGH PRIORITY)
-   - Integrate all phases into main benchmark flow
-   - Connect CLI args to database initialization
-   - Connect CLI args to benchmark execution
-   - Call reporter functions to display results
-   - Test end-to-end benchmark execution
+**Target**: Bug fixes and essential features for production use
 
-2. **Phase 9.1: Advanced Options** (MEDIUM PRIORITY)
+1. **Phase 9.2: Async Database Operations** ⚠️ **CRITICAL** ⚠️
+   - This is the #1 priority for v0.9.0
+   - Fixes multi-client single-thread deadlock issue
+   - Required for proper pgbench compatibility
+   - Enables efficient client:thread ratios (e.g., -c 100 -j 10)
+   - See Phase 9.2 above for detailed task list
+
+2. **Critical Bug Fixes** (HIGH PRIORITY)
+   - [x] Fix transaction lock bug (ROLLBACK on abort) - FIXED in v0.8.1
+   - [x] Add warning for multi-client deadlock - FIXED in v0.8.1
+   - [ ] Implement error retry logic (serialization failures, deadlocks)
+   - [ ] Fix throttling logic (--rate flag currently no-op)
+   - [ ] Test shutdown on Ctrl+C
+
+3. **Phase 9.1: Advanced Options** (MEDIUM PRIORITY)
    - Implement connection establishment mode (-C)
-   - Implement no vacuum option (-n)
-   - Implement custom random seed (--random-seed)
+   - Implement no vacuum option (-n) - **already in CLI, needs wiring**
+   - Implement custom random seed (--random-seed) - **already in CLI**
    - Implement report latencies (--report-latencies)
    - Implement per-transaction logging (--log)
    - Implement sampling (--sampling-rate)
    - Test all options
 
-3. **Phase 10: Integration Testing** (HIGH PRIORITY)
+4. **Phase 10: Integration Testing** (HIGH PRIORITY)
    - Test database initialization end-to-end
    - Test basic benchmark execution
    - Test multi-threaded benchmark
@@ -898,16 +943,26 @@ File: `tests/compatibility_test.rs`
    - Compare output with original pgbench
    - Test across PostgreSQL versions
 
-4. **Phase 9.2: Performance Optimization** (MEDIUM PRIORITY)
+## Future Work (v1.0.0)
+
+**Target**: Feature parity with original pgbench and performance optimization
+
+1. **Phase 9.3: Performance Optimization** (MEDIUM PRIORITY)
    - Profile hot paths
    - Optimize expression evaluation
    - Reduce allocations in hot paths
    - Benchmark against C version
+   - Achieve within 10% of C performance
 
-5. **Phase 3.4: Hash and Permute functions** (OPTIONAL - LOW PRIORITY)
+2. **Phase 3.4: Hash and Permute functions** (OPTIONAL - LOW PRIORITY)
    - Implement hash_murmur2 function
    - Implement hash_fnv1a function
    - Implement permute function
+
+3. **Additional Features**
+   - Pipeline mode (\\startpipeline/\\endpipeline) - requires postgres crate support
+   - Connection pooling optimization
+   - Prepared statement caching improvements
 
 ---
 
@@ -1442,9 +1497,61 @@ File: `tests/compatibility_test.rs`
 
 ---
 
+## Comprehensive TODO Summary
+
+This section consolidates all TODO comments found in the codebase for tracking.
+
+### Critical TODOs (Block v0.9.0)
+- [ ] **src/cli.rs:170** - Remove multi-client warning once async migration complete
+- [ ] **src/worker/thread.rs:410** - Implement retryable error detection (serialization, deadlock)
+- [ ] **src/worker/thread.rs:427** - Implement throttling logic (--rate flag)
+- [ ] **Phase 9.2 (CRITICAL)** - Migrate to tokio-postgres for async operations
+
+### Important TODOs (Block v1.0.0)
+- [ ] **src/script/executor.rs:328, 339** - Implement pipeline mode (\\startpipeline/\\endpipeline)
+- [ ] **src/worker/thread.rs:294** - Support multiple scripts and script selection
+- [ ] **src/worker/thread.rs:474** - Make client processing more efficient with proper event handling
+- [ ] **src/db/connection.rs:278** - Implement connection pooling for multi-threaded execution
+- [ ] **src/db/connection.rs:279** - Add prepared statement support (already partially implemented)
+
+### Statistics TODOs
+- [ ] **src/stats/collector.rs:67** - Implement percentile calculation
+- [ ] **src/stats/collector.rs:68** - Implement histogram support
+- [ ] **src/stats/collector.rs:69** - Implement per-transaction-type statistics
+
+### Expression System TODOs (Low Priority)
+- [ ] **src/expr/parser.rs:35-36** - Extract line/column numbers from lalrpop errors
+- [ ] **src/expr/mod.rs:18-22** - Documentation updates (mostly complete, these are outdated)
+
+### Testing TODOs
+- [ ] **src/worker/thread.rs:626** - Test benchmark stops after N transactions
+- [ ] **src/worker/thread.rs:636** - Test benchmark stops after N seconds
+- [ ] **src/worker/thread.rs:646** - Test script variables properly initialized
+- [ ] **src/random/prng.rs:411** - Verify PRNG output against PostgreSQL pg_prng
+
+### Completed Items (For Reference)
+- [x] Basic PRNG implementation (Xoroshiro128**)
+- [x] Expression parser and evaluator
+- [x] Script parser
+- [x] Built-in transaction scripts
+- [x] Worker thread implementation
+- [x] Transaction statistics
+- [x] Main.rs integration
+- [x] Transaction lock bug fix (ROLLBACK on abort)
+- [x] Multi-client deadlock warning
+
+---
+
 ## Blockers & Issues
 
-None currently.
+**Current Blocker**: Multi-client single-thread deadlock (Phase 9.2)
+- **Impact**: Cannot run configurations like `-c 10 -j 1`
+- **Workaround**: Use `-j N` equal to `-c N`
+- **Fix Planned**: Async database operations migration (v0.9.0)
+
+**Minor Issues**:
+- Pipeline mode not yet supported (requires postgres crate update or tokio-postgres)
+- Some advanced flags not fully wired up (--rate, --connect, etc.)
 
 ---
 
