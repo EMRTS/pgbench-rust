@@ -27,7 +27,7 @@ const SCALE_32BIT_THRESHOLD: i32 = 20000;
 /// It handles all initialization steps according to the args.
 ///
 /// Reference: pgbench.c runInit() function
-pub async fn initialize_database(args: &Args, conn: &mut PgBenchConnection) -> PgBenchResult<()> {
+pub fn initialize_database(args: &Args, conn: &mut PgBenchConnection) -> PgBenchResult<()> {
     eprintln!("pgbench: initializing database...");
 
     // Parse init steps (default: "dtgvp")
@@ -37,25 +37,25 @@ pub async fn initialize_database(args: &Args, conn: &mut PgBenchConnection) -> P
     for step in init_steps {
         match step {
             InitStep::DropTables => {
-                drop_tables(conn).await?;
+                drop_tables(conn)?;
             }
             InitStep::CreateTables => {
-                create_tables(conn, args).await?;
+                create_tables(conn, args)?;
             }
             InitStep::GenerateDataClientSide => {
-                generate_data_client_side(conn, args).await?;
+                generate_data_client_side(conn, args)?;
             }
             InitStep::GenerateDataServerSide => {
-                generate_data_server_side(conn, args).await?;
+                generate_data_server_side(conn, args)?;
             }
             InitStep::Vacuum => {
-                vacuum_tables(conn).await?;
+                vacuum_tables(conn)?;
             }
             InitStep::CreatePrimaryKeys => {
-                create_primary_keys(conn).await?;
+                create_primary_keys(conn)?;
             }
             InitStep::CreateForeignKeys => {
-                create_foreign_keys(conn).await?;
+                create_foreign_keys(conn)?;
             }
         }
     }
@@ -112,14 +112,14 @@ fn parse_init_steps(steps_str: &str) -> PgBenchResult<Vec<InitStep>> {
 /// Drop all pgbench tables
 ///
 /// Reference: pgbench.c initDropTables() line 4775
-async fn drop_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
+fn drop_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
     eprintln!("dropping old tables...");
 
     // Drop all tables in one command (handles foreign key dependencies)
     conn.execute(
         "DROP TABLE IF EXISTS pgbench_accounts, pgbench_branches, pgbench_history, pgbench_tellers",
         &[],
-    ).await?;
+    )?;
 
     Ok(())
 }
@@ -127,7 +127,7 @@ async fn drop_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
 /// Create all pgbench tables
 ///
 /// Reference: pgbench.c initCreateTables() line 4866
-async fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
+fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("creating tables...");
 
     let scale = args.scale;
@@ -207,12 +207,12 @@ async fn create_tables(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResu
             sql.push_str(&format!(" TABLESPACE {}", ts));
         }
 
-        conn.execute(&sql, &[]).await?;
+        conn.execute(&sql, &[])?;
     }
 
     // Create partitions if requested
     if args.partitions.is_some() {
-        create_partitions(conn, args).await?;
+        create_partitions(conn, args)?;
     }
 
     Ok(())
@@ -229,7 +229,7 @@ struct TableDef {
 /// Create partitions for pgbench_accounts table
 ///
 /// Reference: pgbench.c createPartitions() line 4797
-async fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
+fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     let num_partitions = args.partitions.unwrap(); // Safe: caller checks is_some()
     let scale = args.scale;
     let fillfactor = args.fillfactor;
@@ -277,7 +277,7 @@ async fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBench
         // Fillfactor for partitions
         sql.push_str(&format!(" WITH (fillfactor={})", fillfactor));
 
-        conn.execute(&sql, &[]).await?;
+        conn.execute(&sql, &[])?;
     }
 
     Ok(())
@@ -286,7 +286,7 @@ async fn create_partitions(conn: &mut PgBenchConnection, args: &Args) -> PgBench
 /// Generate data client-side using COPY
 ///
 /// Reference: pgbench.c initGenerateDataClientSide() line 5123
-async fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
+fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (client-side)...");
 
     let scale = args.scale as i64;
@@ -298,7 +298,7 @@ async fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) ->
         BRANCHES_PER_SCALE * scale,
         generate_branch_row,
         args.quiet,
-    ).await?;
+    )?;
 
     // Populate tellers
     populate_table(
@@ -307,7 +307,7 @@ async fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) ->
         TELLERS_PER_SCALE * scale,
         generate_teller_row,
         args.quiet,
-    ).await?;
+    )?;
 
     // Populate accounts (largest table)
     populate_table(
@@ -316,7 +316,7 @@ async fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) ->
         ACCOUNTS_PER_SCALE * scale,
         generate_account_row,
         args.quiet,
-    ).await?;
+    )?;
 
     Ok(())
 }
@@ -324,7 +324,7 @@ async fn generate_data_client_side(conn: &mut PgBenchConnection, args: &Args) ->
 /// Generate data server-side using INSERT ... SELECT
 ///
 /// Reference: pgbench.c initGenerateDataServerSide() line 5155
-async fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
+fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) -> PgBenchResult<()> {
     eprintln!("generating data (server-side)...");
 
     let scale = args.scale as i64;
@@ -335,7 +335,7 @@ async fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) ->
          SELECT bid, 0 FROM generate_series(1, {}) AS bid",
         BRANCHES_PER_SCALE * scale
     );
-    conn.execute(&sql, &[]).await?;
+    conn.execute(&sql, &[])?;
 
     // Tellers
     let sql = format!(
@@ -344,7 +344,7 @@ async fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) ->
         TELLERS_PER_SCALE,
         TELLERS_PER_SCALE * scale
     );
-    conn.execute(&sql, &[]).await?;
+    conn.execute(&sql, &[])?;
 
     // Accounts (with blank filler)
     let sql = format!(
@@ -353,7 +353,7 @@ async fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) ->
         ACCOUNTS_PER_SCALE,
         ACCOUNTS_PER_SCALE * scale
     );
-    conn.execute(&sql, &[]).await?;
+    conn.execute(&sql, &[])?;
 
     Ok(())
 }
@@ -361,7 +361,7 @@ async fn generate_data_server_side(conn: &mut PgBenchConnection, args: &Args) ->
 /// Populate a table using COPY protocol
 ///
 /// Reference: pgbench.c initPopulateTable() line 4998
-async fn populate_table<F>(
+fn populate_table<F>(
     conn: &mut PgBenchConnection,
     table_name: &str,
     row_count: i64,
@@ -434,14 +434,14 @@ fn generate_account_row(k: i64) -> String {
 /// Run VACUUM on all tables
 ///
 /// Reference: pgbench.c initVacuum() line 5200
-async fn vacuum_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
+fn vacuum_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
     eprintln!("vacuuming...");
 
     // VACUUM cannot run inside a transaction block
-    conn.execute("VACUUM ANALYZE pgbench_branches", &[]).await?;
-    conn.execute("VACUUM ANALYZE pgbench_tellers", &[]).await?;
-    conn.execute("VACUUM ANALYZE pgbench_accounts", &[]).await?;
-    conn.execute("VACUUM ANALYZE pgbench_history", &[]).await?;
+    conn.execute("VACUUM ANALYZE pgbench_branches", &[])?;
+    conn.execute("VACUUM ANALYZE pgbench_tellers", &[])?;
+    conn.execute("VACUUM ANALYZE pgbench_accounts", &[])?;
+    conn.execute("VACUUM ANALYZE pgbench_history", &[])?;
 
     Ok(())
 }
@@ -449,7 +449,7 @@ async fn vacuum_tables(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
 /// Create primary keys on all tables
 ///
 /// Reference: pgbench.c initCreatePKeys() line 5217
-async fn create_primary_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
+fn create_primary_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
     eprintln!("creating primary keys...");
 
     conn.execute(
@@ -473,7 +473,7 @@ async fn create_primary_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> 
 /// Create foreign keys between tables
 ///
 /// Reference: pgbench.c initCreateFKeys() line 5236
-async fn create_foreign_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
+fn create_foreign_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> {
     eprintln!("creating foreign keys...");
 
     conn.execute(
