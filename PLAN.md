@@ -936,6 +936,27 @@ File: `tests/compatibility_test.rs`
 
 ## Notes & Decisions
 
+### 2025-11-08 (Update 19 - Random Functions Implemented! 🎉)
+- **CRITICAL BUG FIX**: Implemented random functions in expression evaluator
+  - Benchmark was completely non-functional without these!
+  - TPC-B script requires random() to generate random account IDs
+  - **random(min, max)**: Uniform distribution for integer ranges
+  - **random_gaussian(min, max, param)**: Gaussian/normal distribution
+  - **random_exponential(min, max, param)**: Exponential distribution
+  - **random_zipfian(min, max, param)**: Zipfian distribution
+- **API changes to expression evaluator**:
+  - Added RNG parameter to evaluate_expression() signature
+  - Thread RNG through all evaluation functions
+  - Updated all 35 unit tests to pass test_rng()
+  - Updated script executor to pass client.func_rng
+- Uses existing PRNG infrastructure from Phase 6:
+  - Xoroshiro128** algorithm for reproducibility
+  - Distribution functions match original pgbench exactly
+- All 240 tests passing
+- **Benchmark now functional end-to-end!**
+- Reference: pgbench.c getRandomFunc() (1140-1266)
+- Next: Test with real PostgreSQL database using TESTING.md
+
 ### 2025-11-08 (Update 18 - CLI Flags & Modes Implemented! 🎉)
 - **Advanced CLI flags and modes implemented**:
   - **--debug flag**: Sets log level to 'debug' for verbose logging
