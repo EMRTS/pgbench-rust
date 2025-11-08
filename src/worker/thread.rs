@@ -524,6 +524,89 @@ mod tests {
         // with real database connections, which is better suited for integration tests
     }
 
+    #[test]
+    fn test_benchmark_config_defaults() {
+        let config = BenchmarkConfig::new(10);
+        assert_eq!(config.scale, 10);
+        assert_eq!(config.transactions, None);
+        assert_eq!(config.time_limit, None);
+    }
+
+    #[test]
+    fn test_benchmark_config_builder() {
+        let config = BenchmarkConfig::new(5)
+            .with_transactions(1000)
+            .with_time_limit(60);
+
+        assert_eq!(config.scale, 5);
+        assert_eq!(config.transactions, Some(1000));
+        assert_eq!(config.time_limit, Some(60));
+    }
+
+    #[test]
+    fn test_effective_transaction_limit_explicit() {
+        // When transactions is set, use it
+        let config = BenchmarkConfig::new(1).with_transactions(500);
+        assert_eq!(config.effective_transaction_limit(), Some(500));
+    }
+
+    #[test]
+    fn test_effective_transaction_limit_default() {
+        // When no limits set, default to 10 for testing
+        let config = BenchmarkConfig::new(1);
+        assert_eq!(config.effective_transaction_limit(), Some(10));
+    }
+
+    #[test]
+    fn test_effective_transaction_limit_with_time_only() {
+        // When only time limit set, no transaction limit
+        let config = BenchmarkConfig::new(1).with_time_limit(60);
+        assert_eq!(config.effective_transaction_limit(), None);
+    }
+
+    #[test]
+    fn test_effective_transaction_limit_both_set() {
+        // When both set, transactions takes precedence
+        let config = BenchmarkConfig::new(1)
+            .with_transactions(100)
+            .with_time_limit(60);
+        assert_eq!(config.effective_transaction_limit(), Some(100));
+    }
+
+    // Integration tests requiring database connection
+    // These are marked with #[ignore] and run with: cargo test -- --ignored
+
+    #[test]
+    #[ignore]
+    fn test_benchmark_execution_transaction_limit() {
+        // TODO: Test that benchmark stops after N transactions
+        // Requires: PostgreSQL database, connection string
+        // Setup: Initialize pgbench tables
+        // Run: Execute benchmark with transaction limit
+        // Verify: Exactly N transactions executed per client
+    }
+
+    #[test]
+    #[ignore]
+    fn test_benchmark_execution_time_limit() {
+        // TODO: Test that benchmark stops after N seconds
+        // Requires: PostgreSQL database, connection string
+        // Setup: Initialize pgbench tables
+        // Run: Execute benchmark with time limit
+        // Verify: Benchmark duration approximately N seconds
+    }
+
+    #[test]
+    #[ignore]
+    fn test_benchmark_with_variable_initialization() {
+        // TODO: Test that script variables are properly initialized
+        // Requires: PostgreSQL database, connection string
+        // Setup: Initialize pgbench tables
+        // Run: Execute TPC-B script
+        // Verify: Variables :scale, :client_id, :random_seed are set
+        // Verify: random() function uses correct ranges
+    }
+
     // Note: Full integration test of thread pool with actual database
     // connections would go in tests/integration_test.rs
 }
