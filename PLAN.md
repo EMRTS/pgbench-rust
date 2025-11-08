@@ -936,6 +936,27 @@ File: `tests/compatibility_test.rs`
 
 ## Notes & Decisions
 
+### 2025-11-08 (Update 18 - CLI Flags & Modes Implemented! 🎉)
+- **Advanced CLI flags and modes implemented**:
+  - **--debug flag**: Sets log level to 'debug' for verbose logging
+  - **--quiet flag**: Minimal output using print_summary() (transaction count + TPS only)
+  - **--no-vacuum flag**: Skips VACUUM ANALYZE before benchmark
+  - **--random-seed flag**: Custom seed support (falls back to system time)
+  - **--report-latencies flag**: Controls percentile detail output
+  - **--builtin flag**: Shows actual script name in results
+- **VACUUM before benchmark**:
+  - Automatically runs VACUUM ANALYZE on all 4 tables before benchmarking
+  - Can be skipped with --no-vacuum flag
+  - Ensures consistent performance measurements
+- **Improved logging**:
+  - Parse args before initializing logger (to check debug flag)
+  - Respect quiet mode for startup messages
+  - Debug mode enables detailed logging throughout
+- All 240 tests passing
+- Reference: pgbench.c main() (6666-7070)
+- **Overall Project Progress**: Still ~80% (polish and features added)
+- Next: Progress reporting (-P), connection establishment mode (-C), or integration testing
+
 ### 2025-11-08 (Update 17 - Main.rs Complete! 🎉🎉🎉)
 - **End-to-end execution (main.rs) completed**:
   - Implemented complete main.rs integrating all phases (132 lines)
