@@ -449,8 +449,15 @@ fn thread_worker(
                 }
 
                 ConnectionState::Aborted => {
-                    // Transaction aborted, reset and try again
-                    log::debug!("Client {} transaction aborted, resetting", client.id);
+                    // Transaction aborted, need to ROLLBACK to release locks
+                    log::debug!("Client {} transaction aborted, issuing ROLLBACK", client.id);
+
+                    // Issue ROLLBACK to clean up the failed transaction
+                    if let Err(e) = client.executor.execute("ROLLBACK;") {
+                        log::error!("Client {} failed to ROLLBACK: {}", client.id, e);
+                    }
+
+                    // Reset for next transaction
                     client.state = ConnectionState::ChooseScript;
                     client.tries = 0;
                     client.txn_begin = None;
