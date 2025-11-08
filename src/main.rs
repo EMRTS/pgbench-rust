@@ -80,8 +80,15 @@ fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
         info!("Time limit: {} seconds", time);
     }
 
-    // Get random seed (TODO: support --random-seed flag)
-    let random_seed = 42; // Default seed for now
+    // Get random seed (use provided seed or generate from time)
+    let random_seed = args.random_seed.unwrap_or_else(|| {
+        use std::time::SystemTime;
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    });
+    info!("Random seed: {}", random_seed);
 
     // Create thread pool
     let pool = ThreadPool::new(args.jobs, args.clients)?;
@@ -111,6 +118,13 @@ fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     // Aggregate statistics from all threads
     let total_stats = aggregate_stats(&threads);
 
+    // Determine script name for reporting
+    let script_name = args
+        .builtin
+        .as_ref()
+        .map(|b| format!("<builtin: {}>", b))
+        .unwrap_or_else(|| "<builtin: TPC-B (sort of)>".to_string());
+
     // Print results
     println!();
     print_results(
@@ -120,12 +134,11 @@ fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
         benchmark_duration,
         args.scale as i64,
         query_mode.as_str(),
-        "<builtin: TPC-B (sort of)>", // TODO: Get actual script name
+        &script_name,
     );
 
-    // Print latency details if enabled
-    // TODO: Add --report-latencies flag
-    if !total_stats.latencies.is_empty() {
+    // Print latency details if enabled and requested
+    if args.report_latencies && !total_stats.latencies.is_empty() {
         print_latency_details(&total_stats);
     }
 
