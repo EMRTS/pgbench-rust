@@ -19,7 +19,7 @@ use std::time::Duration;
 pub struct ScriptExecutor;
 
 impl ScriptExecutor {
-    /// Execute a single command in the context of a client
+    /// Execute a single command in the context of a client (async)
     ///
     /// # Arguments
     /// * `command` - The command to execute
@@ -31,18 +31,18 @@ impl ScriptExecutor {
     /// * `Err(_)` - Execution error
     ///
     /// Reference: pgbench.c executeStatement() (lines 5540-5760)
-    pub fn execute(command: &Command, client: &mut ClientState) -> PgBenchResult<bool> {
+    pub async fn execute(command: &Command, client: &mut ClientState) -> PgBenchResult<bool> {
         match command {
-            Command::Sql { query } => Self::execute_sql(query, client),
-            Command::Meta(meta) => Self::execute_meta(meta, client),
+            Command::Sql { query } => Self::execute_sql(query, client).await,
+            Command::Meta(meta) => Self::execute_meta(meta, client).await,
         }
     }
 
-    /// Execute a SQL command
+    /// Execute a SQL command (async)
     ///
     /// Substitutes variables in the SQL string before execution.
     /// Reference: pgbench.c executeStatement() SQL case (lines 5545-5640)
-    fn execute_sql(sql: &str, client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_sql(sql: &str, client: &mut ClientState) -> PgBenchResult<bool> {
         log::debug!("Client {}: Executing SQL: {}", client.id, sql);
 
         // Perform variable substitution
@@ -50,10 +50,11 @@ impl ScriptExecutor {
 
         log::debug!("Client {}: After substitution: {}", client.id, substituted_sql);
 
-        // Execute the query
+        // Execute the query (async)
         client
             .executor
             .execute(&substituted_sql)
+            .await
             .map_err(|e| {
                 PgBenchError::QueryError(format!(
                     "SQL execution failed for query '{}': {}",
@@ -110,31 +111,31 @@ impl ScriptExecutor {
         Ok(result)
     }
 
-    /// Execute a meta-command
+    /// Execute a meta-command (async for consistency, though most don't await)
     ///
     /// Handles \set, \sleep, \if, \elif, \else, \endif, \setshell, \startpipeline, \endpipeline
     /// Reference: pgbench.c executeStatement() meta-command cases
-    fn execute_meta(meta: &MetaCommand, client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_meta(meta: &MetaCommand, client: &mut ClientState) -> PgBenchResult<bool> {
         match meta {
-            MetaCommand::Set { variable, value } => Self::execute_set(variable, value, client),
-            MetaCommand::Sleep { duration } => Self::execute_sleep(*duration, client),
+            MetaCommand::Set { variable, value } => Self::execute_set(variable, value, client).await,
+            MetaCommand::Sleep { duration } => Self::execute_sleep(*duration, client).await,
             MetaCommand::SetShell { variable, command } => {
-                Self::execute_setshell(variable, command, client)
+                Self::execute_setshell(variable, command, client).await
             }
-            MetaCommand::If { condition } => Self::execute_if(condition, client),
-            MetaCommand::ElseIf { condition } => Self::execute_elif(condition, client),
-            MetaCommand::Else => Self::execute_else(client),
-            MetaCommand::EndIf => Self::execute_endif(client),
-            MetaCommand::StartPipeline => Self::execute_start_pipeline(client),
-            MetaCommand::EndPipeline => Self::execute_end_pipeline(client),
+            MetaCommand::If { condition } => Self::execute_if(condition, client).await,
+            MetaCommand::ElseIf { condition } => Self::execute_elif(condition, client).await,
+            MetaCommand::Else => Self::execute_else(client).await,
+            MetaCommand::EndIf => Self::execute_endif(client).await,
+            MetaCommand::StartPipeline => Self::execute_start_pipeline(client).await,
+            MetaCommand::EndPipeline => Self::execute_end_pipeline(client).await,
         }
     }
 
-    /// Execute \set command
+    /// Execute \set command (async for consistency)
     ///
     /// Parses and evaluates the expression, then sets the variable.
     /// Reference: pgbench.c executeStatement() META_SET case (lines 5650-5670)
-    fn execute_set(
+    async fn execute_set(
         variable: &str,
         value_str: &str,
         client: &mut ClientState,
@@ -172,7 +173,7 @@ impl ScriptExecutor {
     ///
     /// Sets the client to sleep for the specified duration (in seconds).
     /// Reference: pgbench.c executeStatement() META_SLEEP case (lines 5675-5690)
-    fn execute_sleep(duration_sec: f64, client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_sleep(duration_sec: f64, client: &mut ClientState) -> PgBenchResult<bool> {
         // Convert seconds to microseconds
         let duration_us = (duration_sec * 1_000_000.0) as u64;
         let duration = Duration::from_micros(duration_us);
@@ -194,7 +195,7 @@ impl ScriptExecutor {
     ///
     /// Runs a shell command and sets the variable to its output.
     /// Reference: pgbench.c executeStatement() META_SETSHELL case (lines 5695-5720)
-    fn execute_setshell(
+    async fn execute_setshell(
         variable: &str,
         command: &str,
         client: &mut ClientState,
@@ -257,7 +258,7 @@ impl ScriptExecutor {
     ///
     /// Evaluates the condition and returns whether to continue execution.
     /// Reference: pgbench.c executeStatement() META_IF case
-    fn execute_if(condition: &PgBenchExpr, client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_if(condition: &PgBenchExpr, client: &mut ClientState) -> PgBenchResult<bool> {
         log::debug!("Client {}: Evaluating \\if condition", client.id);
 
         // Create evaluation context
@@ -282,7 +283,7 @@ impl ScriptExecutor {
     ///
     /// Similar to \if but used after a false \if
     /// Reference: pgbench.c executeStatement() META_ELIF case
-    fn execute_elif(condition: &PgBenchExpr, client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_elif(condition: &PgBenchExpr, client: &mut ClientState) -> PgBenchResult<bool> {
         log::debug!("Client {}: Evaluating \\elif condition", client.id);
 
         // Create evaluation context
@@ -306,7 +307,7 @@ impl ScriptExecutor {
     ///
     /// Switches to executing commands after a false \if/\elif
     /// Reference: pgbench.c executeStatement() META_ELSE case
-    fn execute_else(_client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_else(_client: &mut ClientState) -> PgBenchResult<bool> {
         // \else always returns true (execute following commands)
         Ok(true)
     }
@@ -315,7 +316,7 @@ impl ScriptExecutor {
     ///
     /// Ends a conditional block
     /// Reference: pgbench.c executeStatement() META_ENDIF case
-    fn execute_endif(_client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_endif(_client: &mut ClientState) -> PgBenchResult<bool> {
         // \endif always returns true (continue execution)
         Ok(true)
     }
@@ -324,7 +325,7 @@ impl ScriptExecutor {
     ///
     /// Starts PostgreSQL pipeline mode (PostgreSQL 14+)
     /// Reference: pgbench.c executeStatement() META_STARTPIPELINE case
-    fn execute_start_pipeline(_client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_start_pipeline(_client: &mut ClientState) -> PgBenchResult<bool> {
         // TODO: Implement pipeline mode when postgres crate supports it
         // For now, this is a no-op
         log::debug!("\\startpipeline: Pipeline mode not yet implemented");
@@ -335,7 +336,7 @@ impl ScriptExecutor {
     ///
     /// Ends PostgreSQL pipeline mode
     /// Reference: pgbench.c executeStatement() META_ENDPIPELINE case
-    fn execute_end_pipeline(_client: &mut ClientState) -> PgBenchResult<bool> {
+    async fn execute_end_pipeline(_client: &mut ClientState) -> PgBenchResult<bool> {
         // TODO: Implement pipeline mode when postgres crate supports it
         // For now, this is a no-op
         log::debug!("\\endpipeline: Pipeline mode not yet implemented");

@@ -374,21 +374,32 @@ where
     eprintln!("generating {} rows for {}...", row_count, table_name);
 
     let start = Instant::now();
-    let mut writer = conn.copy_in(&format!("COPY {} FROM STDIN", table_name))?;
 
-    for k in 0..row_count {
-        let row_data = generate_row(k);
-        writer.write_all(row_data.as_bytes())?;
+    // TODO: Migrate to tokio-postgres binary_copy or CopyInSink
+    // For now, use batched INSERTs (slower but works with async)
+    // Note: This is a temporary workaround during async migration
 
-        // Progress reporting (every 100k rows)
-        if !quiet && (k + 1) % 100_000 == 0 {
+    let batch_size = 1000;
+    for batch_start in (0..row_count).step_by(batch_size) {
+        let batch_end = (batch_start + batch_size as i64).min(row_count);
+
+        for k in batch_start..batch_end {
+            let row_data = generate_row(k);
+            // Parse the row and execute as INSERT
+            // This is slower than COPY but works for now
+            let insert_sql = format!("INSERT INTO {} VALUES ({})", table_name, row_data.trim());
+            conn.execute(&insert_sql, &[]).await?;
+        }
+
+        // Progress reporting
+        if !quiet {
             let elapsed = start.elapsed().as_secs_f64();
-            let remaining = ((row_count - k - 1) as f64) * elapsed / (k + 1) as f64;
+            let remaining = ((row_count - batch_end) as f64) * elapsed / batch_end as f64;
             eprint!(
                 "\r{} of {} tuples ({}%) of {} done (elapsed {:.2}s, remaining {:.2}s)",
-                k + 1,
+                batch_end,
                 row_count,
-                ((k + 1) * 100) / row_count,
+                (batch_end * 100) / row_count,
                 table_name,
                 elapsed,
                 remaining
@@ -396,8 +407,6 @@ where
             io::stderr().flush()?;
         }
     }
-
-    writer.finish()?;
 
     if !quiet {
         eprintln!(); // New line after progress
@@ -455,17 +464,17 @@ async fn create_primary_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> 
     conn.execute(
         "ALTER TABLE pgbench_branches ADD PRIMARY KEY (bid)",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_tellers ADD PRIMARY KEY (tid)",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_accounts ADD PRIMARY KEY (aid)",
         &[],
-    )?;
+    ).await?;
 
     Ok(())
 }
@@ -480,31 +489,31 @@ async fn create_foreign_keys(conn: &mut PgBenchConnection) -> PgBenchResult<()> 
         "ALTER TABLE pgbench_tellers ADD CONSTRAINT pgbench_tellers_bid_fkey \
          FOREIGN KEY (bid) REFERENCES pgbench_branches",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_accounts ADD CONSTRAINT pgbench_accounts_bid_fkey \
          FOREIGN KEY (bid) REFERENCES pgbench_branches",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_history ADD CONSTRAINT pgbench_history_bid_fkey \
          FOREIGN KEY (bid) REFERENCES pgbench_branches",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_history ADD CONSTRAINT pgbench_history_tid_fkey \
          FOREIGN KEY (tid) REFERENCES pgbench_tellers",
         &[],
-    )?;
+    ).await?;
 
     conn.execute(
         "ALTER TABLE pgbench_history ADD CONSTRAINT pgbench_history_aid_fkey \
          FOREIGN KEY (aid) REFERENCES pgbench_accounts",
         &[],
-    )?;
+    ).await?;
 
     Ok(())
 }

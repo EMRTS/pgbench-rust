@@ -1,6 +1,7 @@
-//! Worker thread implementation
+//! Worker thread implementation (async with tokio)
 //!
-//! This module manages the thread pool for benchmark execution.
+//! This module manages the async task pool for benchmark execution.
+//! Migrated to tokio for async operations to fix multi-client single-thread deadlock.
 //! Reference: original-source/pgbench.c threadRun() (lines 7484+)
 
 use crate::db::connection::PgBenchConnection;
@@ -9,8 +10,9 @@ use crate::error::{PgBenchError, PgBenchResult};
 use crate::script::{parse_script, BuiltinScript, ScriptExecutor};
 use crate::types::Command;
 use crate::worker::state::{ClientState, ConnectionState, StatsData, ThreadState};
-use std::sync::{Arc, Barrier};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
+use tokio::sync::Barrier;
+use tokio::task::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Benchmark configuration options
@@ -142,23 +144,19 @@ impl ThreadPool {
             let clients_per_thread = self.clients_per_thread;
             let bench_config = config.clone();
 
-            // Spawn the thread
-            let handle = thread::Builder::new()
-                .name(format!("pgbench-worker-{}", thread_id))
-                .spawn(move || {
-                    thread_worker(
-                        thread_id,
-                        clients_per_thread,
-                        conn_str,
-                        query_mode,
-                        thread_seed,
-                        bench_config,
-                        barrier,
-                    )
-                })
-                .map_err(|e| {
-                    PgBenchError::ThreadError(format!("Failed to spawn thread {}: {}", thread_id, e))
-                })?;
+            // Spawn the async task (replaces OS thread)
+            let handle = tokio::task::spawn(async move {
+                thread_worker(
+                    thread_id,
+                    clients_per_thread,
+                    conn_str,
+                    query_mode,
+                    thread_seed,
+                    bench_config,
+                    barrier,
+                )
+                .await
+            });
 
             self.threads.push(handle);
         }
@@ -166,25 +164,25 @@ impl ThreadPool {
         Ok(self)
     }
 
-    /// Start all threads (waits at barrier, then signals all threads to begin)
-    pub fn start(&self) {
+    /// Start all threads (waits at barrier, then signals all threads to begin) - async
+    pub async fn start(&self) {
         log::info!("Starting {} worker threads", self.num_threads);
 
         // Wait at barrier - this releases all threads to start simultaneously
-        self.start_barrier.wait();
+        self.start_barrier.wait().await;
 
         log::info!("All threads started");
     }
 
-    /// Wait for all threads to complete and collect results
+    /// Wait for all threads to complete and collect results - async
     ///
     /// # Returns
     /// Vector of ThreadState from each thread with statistics
-    pub fn join(self) -> PgBenchResult<Vec<ThreadState>> {
+    pub async fn join(self) -> PgBenchResult<Vec<ThreadState>> {
         let mut results = Vec::with_capacity(self.num_threads);
 
         for (thread_id, handle) in self.threads.into_iter().enumerate() {
-            match handle.join() {
+            match handle.await {
                 Ok(Ok(thread_state)) => {
                     log::debug!("Thread {} completed successfully", thread_id);
                     results.push(thread_state);
@@ -193,10 +191,10 @@ impl ThreadPool {
                     log::error!("Thread {} failed: {}", thread_id, e);
                     return Err(e);
                 }
-                Err(_) => {
+                Err(e) => {
                     return Err(PgBenchError::ThreadError(format!(
-                        "Thread {} panicked",
-                        thread_id
+                        "Thread {} panicked: {}",
+                        thread_id, e
                     )));
                 }
             }
@@ -226,7 +224,7 @@ impl ThreadPool {
 /// 5. Returns ThreadState with results
 ///
 /// Reference: pgbench.c threadRun() (lines 7484+)
-fn thread_worker(
+async fn thread_worker(
     thread_id: usize,
     num_clients: usize,
     connection_string: String,
@@ -258,8 +256,9 @@ fn thread_worker(
             global_client_id
         );
 
-        // Create database connection
+        // Create database connection (async)
         let connection = PgBenchConnection::connect(&connection_string)
+            .await
             .map_err(|e| {
                 PgBenchError::ConnectionError(format!(
                     "Thread {} client {} connection failed: {}",
@@ -282,8 +281,8 @@ fn thread_worker(
         num_clients
     );
 
-    // Wait at barrier for all threads to be ready
-    start_barrier.wait();
+    // Wait at barrier for all threads to be ready (async)
+    start_barrier.wait().await;
 
     log::debug!("Thread {} starting benchmark", thread_id);
 
@@ -392,7 +391,8 @@ fn thread_worker(
 
                     let command = &commands[client.command_index];
 
-                    match ScriptExecutor::execute(command, client) {
+                    // Execute command asynchronously
+                    match ScriptExecutor::execute(command, client).await {
                         Ok(_) => {
                             // Command executed successfully, move to next
                             client.command_index += 1;
@@ -452,8 +452,8 @@ fn thread_worker(
                     // Transaction aborted, need to ROLLBACK to release locks
                     log::debug!("Client {} transaction aborted, issuing ROLLBACK", client.id);
 
-                    // Issue ROLLBACK to clean up the failed transaction
-                    if let Err(e) = client.executor.execute("ROLLBACK;") {
+                    // Issue ROLLBACK to clean up the failed transaction (async)
+                    if let Err(e) = client.executor.execute("ROLLBACK;").await {
                         log::error!("Client {} failed to ROLLBACK: {}", client.id, e);
                     }
 

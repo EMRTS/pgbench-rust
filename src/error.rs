@@ -179,8 +179,8 @@ pub enum PgBenchError {
 pub type PgBenchResult<T> = Result<T, PgBenchError>;
 
 // From trait implementations for external error types
-impl From<postgres::Error> for PgBenchError {
-    fn from(err: postgres::Error) -> Self {
+impl From<tokio_postgres::Error> for PgBenchError {
+    fn from(err: tokio_postgres::Error) -> Self {
         PgBenchError::QueryError(err.to_string())
     }
 }

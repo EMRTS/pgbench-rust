@@ -23,7 +23,8 @@ use error::PgBenchResult;
 use stats::{print_latency_details, print_results, print_summary};
 use worker::{aggregate_stats, BenchmarkConfig, ThreadPool};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Parse command-line arguments first (to check debug flag)
     let args = cli::Args::parse_args()?;
 
@@ -37,43 +38,43 @@ fn main() -> Result<()> {
 
     // Run in appropriate mode
     if args.initialize {
-        run_initialize_mode(&args)?;
+        run_initialize_mode(&args).await?;
     } else {
-        run_benchmark_mode(&args)?;
+        run_benchmark_mode(&args).await?;
     }
 
     Ok(())
 }
 
-/// Run database initialization mode (-i flag)
-fn run_initialize_mode(args: &cli::Args) -> PgBenchResult<()> {
+/// Run database initialization mode (-i flag) - async
+async fn run_initialize_mode(args: &cli::Args) -> PgBenchResult<()> {
     info!("Initializing database...");
 
-    // Connect to database
-    let mut conn = PgBenchConnection::connect(&args.connection)?;
+    // Connect to database (async)
+    let mut conn = PgBenchConnection::connect(&args.connection).await?;
 
-    // Run initialization
-    db::init::initialize_database(args, &mut conn)?;
+    // Run initialization (async)
+    db::init::initialize_database(args, &mut conn).await?;
 
     info!("Database initialization complete");
     Ok(())
 }
 
-/// Run benchmark mode (default)
-fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
+/// Run benchmark mode (default) - async
+async fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     info!("Running benchmark...");
     info!("Clients: {}, Threads: {}", args.clients, args.jobs);
 
     // Run VACUUM before benchmark unless --no-vacuum is specified
     if !args.no_vacuum {
         info!("Vacuuming tables before benchmark...");
-        let mut conn = PgBenchConnection::connect(&args.connection)?;
+        let mut conn = PgBenchConnection::connect(&args.connection).await?;
 
-        // VACUUM cannot run inside a transaction block
-        conn.execute("VACUUM ANALYZE pgbench_branches", &[])?;
-        conn.execute("VACUUM ANALYZE pgbench_tellers", &[])?;
-        conn.execute("VACUUM ANALYZE pgbench_accounts", &[])?;
-        conn.execute("VACUUM ANALYZE pgbench_history", &[])?;
+        // VACUUM cannot run inside a transaction block (async)
+        conn.execute("VACUUM ANALYZE pgbench_branches", &[]).await?;
+        conn.execute("VACUUM ANALYZE pgbench_tellers", &[]).await?;
+        conn.execute("VACUUM ANALYZE pgbench_accounts", &[]).await?;
+        conn.execute("VACUUM ANALYZE pgbench_history", &[]).await?;
 
         info!("VACUUM complete");
     }
@@ -121,11 +122,11 @@ fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     // Record benchmark start time
     let benchmark_start = Instant::now();
 
-    // Start all threads (barrier synchronization)
-    pool.start();
+    // Start all threads (barrier synchronization) - async
+    pool.start().await;
 
-    // Wait for all threads to complete
-    let threads = pool.join()?;
+    // Wait for all threads to complete - async
+    let threads = pool.join().await?;
 
     // Calculate total benchmark duration
     let benchmark_duration = benchmark_start.elapsed();
