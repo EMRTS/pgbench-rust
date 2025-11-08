@@ -304,7 +304,17 @@ fn thread_worker(
     let benchmark_start = Instant::now();
     let time_limit_duration = config.time_limit.map(|secs| Duration::from_secs(secs));
 
+    let mut loop_count = 0;
     while !thread_state.all_clients_finished() {
+        loop_count += 1;
+        if loop_count % 1000 == 0 {
+            log::debug!("Thread {} loop iteration {}, clients: {:?}",
+                thread_id,
+                loop_count,
+                thread_state.clients.iter().map(|c| (c.id, &c.state, c.transaction_count)).collect::<Vec<_>>()
+            );
+        }
+
         // Check time limit
         if let Some(limit) = time_limit_duration {
             if benchmark_start.elapsed() >= limit {
@@ -339,8 +349,16 @@ fn thread_worker(
             // Process client state machine
             match client.state {
                 ConnectionState::ChooseScript => {
-                    // Initialize variables for the script
-                    // TODO: Initialize script-specific variables (scale, etc.)
+                    // Initialize standard variables (scale, client_id, random_seed)
+                    client.initialize_standard_variables(config.scale, seed);
+
+                    log::debug!(
+                        "Client {} initialized with scale={}, client_id={}, random_seed={}",
+                        client.id,
+                        config.scale,
+                        client.id,
+                        seed
+                    );
 
                     // Start transaction
                     client.start_transaction();
@@ -348,7 +366,7 @@ fn thread_worker(
                     client.command_index = 0;
                     client.state = ConnectionState::ExecuteCommand;
 
-                    log::trace!("Client {} starting transaction {}", client.id, client.transaction_count + 1);
+                    log::debug!("Client {} starting transaction {}", client.id, client.transaction_count + 1);
                 }
 
                 ConnectionState::ExecuteCommand => {
