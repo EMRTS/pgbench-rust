@@ -77,8 +77,8 @@ pub struct ThreadPool {
     /// Number of threads
     num_threads: usize,
 
-    /// Number of clients per thread
-    clients_per_thread: usize,
+    /// Total number of clients across all threads
+    total_clients: usize,
 }
 
 impl ThreadPool {
@@ -103,18 +103,34 @@ impl ThreadPool {
             ));
         }
 
-        // Calculate clients per thread (distribute evenly)
-        let clients_per_thread = (total_clients + num_threads - 1) / num_threads;
-
         // Barrier requires num_threads + 1 (threads + main thread)
         let start_barrier = Arc::new(Barrier::new(num_threads + 1));
+
+        // Note: clients_per_thread will be calculated per-thread to handle uneven distribution
+        // We don't store it here anymore - each thread calculates its own client count
 
         Ok(Self {
             threads: Vec::with_capacity(num_threads),
             start_barrier,
             num_threads,
-            clients_per_thread,
+            total_clients,
         })
+    }
+
+    /// Calculate number of clients for a specific thread
+    ///
+    /// Distributes clients as evenly as possible across threads.
+    /// Example: 15 clients, 12 threads → 3 threads get 2 clients, 9 threads get 1 client
+    fn clients_for_thread(thread_id: usize, total_clients: usize, num_threads: usize) -> usize {
+        let base_clients = total_clients / num_threads;
+        let extra_clients = total_clients % num_threads;
+
+        // First 'extra_clients' threads get one extra client
+        if thread_id < extra_clients {
+            base_clients + 1
+        } else {
+            base_clients
+        }
     }
 
     /// Spawn all worker threads
@@ -135,20 +151,24 @@ impl ThreadPool {
         config: BenchmarkConfig,
     ) -> PgBenchResult<Self> {
         for thread_id in 0..self.num_threads {
+            // Calculate how many clients this specific thread should handle
+            let num_clients = Self::clients_for_thread(thread_id, self.total_clients, self.num_threads);
+
             // Derive unique seed for this thread
             let thread_seed = base_seed.wrapping_add(thread_id as u64 * 1000);
 
             // Clone what we need to move into thread
             let barrier = Arc::clone(&self.start_barrier);
             let conn_str = connection_string.clone();
-            let clients_per_thread = self.clients_per_thread;
             let bench_config = config.clone();
+
+            log::debug!("Thread {} will handle {} clients", thread_id, num_clients);
 
             // Spawn the async task (replaces OS thread)
             let handle = tokio::task::spawn(async move {
                 thread_worker(
                     thread_id,
-                    clients_per_thread,
+                    num_clients,
                     conn_str,
                     query_mode,
                     thread_seed,
@@ -208,9 +228,9 @@ impl ThreadPool {
         self.num_threads
     }
 
-    /// Get clients per thread
-    pub fn clients_per_thread(&self) -> usize {
-        self.clients_per_thread
+    /// Get total number of clients across all threads
+    pub fn total_clients(&self) -> usize {
+        self.total_clients
     }
 }
 
@@ -547,7 +567,7 @@ mod tests {
     fn test_thread_pool_creation() {
         let pool = ThreadPool::new(4, 10).unwrap();
         assert_eq!(pool.num_threads(), 4);
-        assert_eq!(pool.clients_per_thread(), 3); // 10 clients / 4 threads = 3 per thread
+        assert_eq!(pool.total_clients(), 10);
     }
 
     #[test]
@@ -558,17 +578,34 @@ mod tests {
 
     #[test]
     fn test_clients_distribution() {
-        // Test even distribution
-        let pool1 = ThreadPool::new(4, 12).unwrap();
-        assert_eq!(pool1.clients_per_thread(), 3); // Exactly 3 per thread
+        // Test even distribution: 12 clients, 4 threads → 3 clients each
+        assert_eq!(ThreadPool::clients_for_thread(0, 12, 4), 3);
+        assert_eq!(ThreadPool::clients_for_thread(1, 12, 4), 3);
+        assert_eq!(ThreadPool::clients_for_thread(2, 12, 4), 3);
+        assert_eq!(ThreadPool::clients_for_thread(3, 12, 4), 3);
 
-        // Test uneven distribution (should round up)
-        let pool2 = ThreadPool::new(3, 10).unwrap();
-        assert_eq!(pool2.clients_per_thread(), 4); // 10/3 = 3.33, rounds up to 4
+        // Test uneven distribution: 10 clients, 3 threads → 4, 3, 3
+        assert_eq!(ThreadPool::clients_for_thread(0, 10, 3), 4); // First thread gets extra
+        assert_eq!(ThreadPool::clients_for_thread(1, 10, 3), 3);
+        assert_eq!(ThreadPool::clients_for_thread(2, 10, 3), 3);
 
-        // Test more threads than clients
-        let pool3 = ThreadPool::new(10, 3).unwrap();
-        assert_eq!(pool3.clients_per_thread(), 1); // 1 client per thread (some threads idle)
+        // Test uneven distribution: 15 clients, 12 threads → 3 threads get 2, rest get 1
+        for thread_id in 0..3 {
+            assert_eq!(ThreadPool::clients_for_thread(thread_id, 15, 12), 2);
+        }
+        for thread_id in 3..12 {
+            assert_eq!(ThreadPool::clients_for_thread(thread_id, 15, 12), 1);
+        }
+
+        // Verify total: 3*2 + 9*1 = 6 + 9 = 15 ✓
+        let total: usize = (0..12).map(|tid| ThreadPool::clients_for_thread(tid, 15, 12)).sum();
+        assert_eq!(total, 15);
+
+        // Test more threads than clients: 3 clients, 10 threads → first 3 get 1, rest get 0
+        assert_eq!(ThreadPool::clients_for_thread(0, 3, 10), 1);
+        assert_eq!(ThreadPool::clients_for_thread(1, 3, 10), 1);
+        assert_eq!(ThreadPool::clients_for_thread(2, 3, 10), 1);
+        assert_eq!(ThreadPool::clients_for_thread(3, 3, 10), 0); // No clients for this thread
     }
 
     #[test]
