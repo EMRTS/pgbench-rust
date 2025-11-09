@@ -266,6 +266,9 @@ pub struct ClientState {
 
     /// Transaction count for this client (for -t limit)
     pub transaction_count: u64,
+
+    /// Statistics for this client (latencies, counts, etc.)
+    pub stats: StatsData,
 }
 
 impl ClientState {
@@ -290,6 +293,7 @@ impl ClientState {
             stmt_begin: None,
             tries: 0,
             transaction_count: 0,
+            stats: StatsData::new(),
         }
     }
 

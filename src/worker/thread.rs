@@ -317,13 +317,16 @@ async fn run_client_loop(
 
             ConnectionState::EndTransaction => {
                 // Transaction completed successfully
-                if let Some(_latency_us) = client.end_transaction() {
+                if let Some(latency_us) = client.end_transaction() {
+                    // Record stats for this transaction
+                    client.stats.record_transaction(latency_us);
                     client.transaction_count += 1;
 
                     log::trace!(
-                        "Client {} completed transaction {}",
+                        "Client {} completed transaction {} in {} μs",
                         client.id,
-                        client.transaction_count
+                        client.transaction_count,
+                        latency_us
                     );
                 }
 
@@ -335,6 +338,9 @@ async fn run_client_loop(
             ConnectionState::Aborted => {
                 // Transaction aborted, need to ROLLBACK to release locks
                 log::debug!("Client {} transaction aborted, issuing ROLLBACK", client.id);
+
+                // Record the failure
+                client.stats.record_failed(false, false);
 
                 // Issue ROLLBACK to clean up the failed transaction (async)
                 if let Err(e) = client.executor.execute("ROLLBACK;").await {
@@ -488,10 +494,15 @@ async fn thread_worker(
         }
     }
 
-    // Reconstruct thread_state with completed clients
+    // Reconstruct thread_state with completed clients and merge stats
     for result in results {
         match result {
-            Ok(client) => thread_state.add_client(client),
+            Ok(client) => {
+                // Merge client stats into thread stats
+                thread_state.stats.merge(&client.stats);
+                // Add client back to thread state
+                thread_state.add_client(client);
+            }
             Err(e) => {
                 log::error!("Client execution failed: {}", e);
                 // Continue with other clients
