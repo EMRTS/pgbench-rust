@@ -214,6 +214,153 @@ impl ThreadPool {
     }
 }
 
+/// Run the benchmark loop for a single client
+///
+/// This function executes transactions for a single client until it reaches
+/// the transaction limit or time limit. Each client runs concurrently in its
+/// own tokio task, allowing multiple clients to make progress without blocking.
+async fn run_client_loop(
+    mut client: ClientState,
+    commands: Arc<Vec<Command>>,
+    config: BenchmarkConfig,
+    benchmark_start: Instant,
+    time_limit_duration: Option<Duration>,
+) -> PgBenchResult<ClientState> {
+    log::debug!("Client {} starting benchmark loop", client.id);
+
+    // Client state machine loop
+    loop {
+        // Check time limit
+        if let Some(limit) = time_limit_duration {
+            if benchmark_start.elapsed() >= limit {
+                log::debug!("Client {} reached time limit", client.id);
+                client.state = ConnectionState::Finished;
+                break;
+            }
+        }
+
+        // Check if client is finished
+        if matches!(client.state, ConnectionState::Finished | ConnectionState::Aborted) {
+            break;
+        }
+
+        // Check if client has reached transaction limit
+        if let Some(limit) = config.effective_transaction_limit() {
+            if client.transaction_count >= limit {
+                client.state = ConnectionState::Finished;
+                log::debug!("Client {} reached transaction limit ({})", client.id, limit);
+                break;
+            }
+        }
+
+        // Process client state machine
+        match client.state {
+            ConnectionState::ChooseScript => {
+                // Start transaction
+                client.start_transaction();
+                client.script_index = 0;
+                client.command_index = 0;
+                client.state = ConnectionState::ExecuteCommand;
+
+                log::trace!("Client {} starting transaction {}", client.id, client.transaction_count + 1);
+            }
+
+            ConnectionState::ExecuteCommand => {
+                // Execute current command
+                if client.command_index >= commands.len() {
+                    // All commands executed, end transaction
+                    client.state = ConnectionState::EndTransaction;
+                    continue;
+                }
+
+                let command = &commands[client.command_index];
+
+                // Execute command asynchronously
+                match ScriptExecutor::execute(command, &mut client).await {
+                    Ok(_) => {
+                        // Command executed successfully, move to next
+                        client.command_index += 1;
+                    }
+                    Err(e) => {
+                        // Command failed - log detailed error
+                        log::error!(
+                            "Client {} command {} failed: {:?}",
+                            client.id,
+                            client.command_index,
+                            command
+                        );
+                        log::error!("Client {} error details: {:#?}", client.id, e);
+
+                        // TODO: Check if error is retryable (serialization, deadlock)
+                        // For now, just abort the transaction
+                        client.state = ConnectionState::Aborted;
+                    }
+                }
+            }
+
+            ConnectionState::Sleep => {
+                // Check if sleep time has elapsed
+                if !client.should_sleep() {
+                    client.sleep_until = None;
+                    client.state = ConnectionState::ExecuteCommand;
+                } else {
+                    // Yield to other tasks while sleeping
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            }
+
+            ConnectionState::Throttle => {
+                // TODO: Implement throttling logic (--rate flag)
+                // For now, just move to next state
+                client.state = ConnectionState::ExecuteCommand;
+            }
+
+            ConnectionState::EndTransaction => {
+                // Transaction completed successfully
+                if let Some(_latency_us) = client.end_transaction() {
+                    client.transaction_count += 1;
+
+                    log::trace!(
+                        "Client {} completed transaction {}",
+                        client.id,
+                        client.transaction_count
+                    );
+                }
+
+                // Reset for next transaction
+                client.state = ConnectionState::ChooseScript;
+                client.tries = 0;
+            }
+
+            ConnectionState::Aborted => {
+                // Transaction aborted, need to ROLLBACK to release locks
+                log::debug!("Client {} transaction aborted, issuing ROLLBACK", client.id);
+
+                // Issue ROLLBACK to clean up the failed transaction (async)
+                if let Err(e) = client.executor.execute("ROLLBACK;").await {
+                    log::error!("Client {} failed to ROLLBACK: {}", client.id, e);
+                }
+
+                // Reset for next transaction
+                client.state = ConnectionState::ChooseScript;
+                client.tries = 0;
+                client.txn_begin = None;
+            }
+
+            ConnectionState::Finished => {
+                // Client is done
+                break;
+            }
+        }
+
+        // Small yield to prevent busy-waiting and allow other tasks to run
+        tokio::task::yield_now().await;
+    }
+
+    log::debug!("Client {} finished with {} transactions", client.id, client.transaction_count);
+    Ok(client)
+}
+
 /// Worker thread function
 ///
 /// Each thread:
@@ -287,6 +434,7 @@ async fn thread_worker(
     log::debug!("Thread {} starting benchmark", thread_id);
 
     // Mark benchmark start time
+    let benchmark_start = Instant::now();
     thread_state.start_benchmark();
 
     // Parse the default TPC-B script (for now, hardcode to default script)
@@ -294,8 +442,8 @@ async fn thread_worker(
     let builtin = BuiltinScript::get("tpcb-like")
         .ok_or_else(|| PgBenchError::ConfigError("TPC-B script not found".to_string()))?;
 
-    let commands = parse_script(builtin.script)
-        .map_err(|e| PgBenchError::ConfigError(format!("Failed to parse script: {}", e)))?;
+    let commands = Arc::new(parse_script(builtin.script)
+        .map_err(|e| PgBenchError::ConfigError(format!("Failed to parse script: {}", e)))?);
 
     log::debug!("Thread {} parsed script with {} commands", thread_id, commands.len());
 
@@ -311,169 +459,47 @@ async fn thread_worker(
         }
     }
 
-    // Main benchmark loop
-    // Run until all clients are finished or limits reached
-    let benchmark_start = Instant::now();
+    // Spawn concurrent tasks for each client
+    // This allows multiple clients to make progress concurrently without blocking each other
     let time_limit_duration = config.time_limit.map(|secs| Duration::from_secs(secs));
 
-    let mut loop_count = 0;
-    while !thread_state.all_clients_finished() {
-        loop_count += 1;
-        if loop_count % 1000 == 0 {
-            log::debug!("Thread {} loop iteration {}, clients: {:?}",
-                thread_id,
-                loop_count,
-                thread_state.clients.iter().map(|c| (c.id, &c.state, c.transaction_count)).collect::<Vec<_>>()
-            );
-        }
+    let mut client_tasks = Vec::new();
+    for mut client in thread_state.clients.drain(..) {
+        let commands_clone = Arc::clone(&commands);
+        let config_clone = config.clone();
+        let benchmark_start_clone = benchmark_start;
 
-        // Check time limit
-        if let Some(limit) = time_limit_duration {
-            if benchmark_start.elapsed() >= limit {
-                log::info!("Thread {} reached time limit ({} seconds)", thread_id, config.time_limit.unwrap());
-                // Mark all clients as finished
-                for client in &mut thread_state.clients {
-                    if !matches!(client.state, ConnectionState::Finished | ConnectionState::Aborted) {
-                        client.state = ConnectionState::Finished;
-                    }
-                }
-                break;
-            }
-        }
-        // Process each client
-        for client_idx in 0..thread_state.num_clients() {
-            let client = &mut thread_state.clients[client_idx];
+        let task = tokio::spawn(async move {
+            run_client_loop(client, commands_clone, config_clone, benchmark_start_clone, time_limit_duration).await
+        });
 
-            // Skip if client is already finished or aborted
-            if matches!(client.state, ConnectionState::Finished | ConnectionState::Aborted) {
-                continue;
-            }
-
-            // Check if client has reached transaction limit
-            if let Some(limit) = config.effective_transaction_limit() {
-                if client.transaction_count >= limit {
-                    client.state = ConnectionState::Finished;
-                    log::debug!("Client {} reached transaction limit ({})", client.id, limit);
-                    continue;
-                }
-            }
-
-            // Process client state machine
-            match client.state {
-                ConnectionState::ChooseScript => {
-                    // Initialize standard variables (scale, client_id, random_seed)
-                    client.initialize_standard_variables(config.scale, seed);
-
-                    log::debug!(
-                        "Client {} initialized with scale={}, client_id={}, random_seed={}",
-                        client.id,
-                        config.scale,
-                        client.id,
-                        seed
-                    );
-
-                    // Start transaction
-                    client.start_transaction();
-                    client.script_index = 0;
-                    client.command_index = 0;
-                    client.state = ConnectionState::ExecuteCommand;
-
-                    log::debug!("Client {} starting transaction {}", client.id, client.transaction_count + 1);
-                }
-
-                ConnectionState::ExecuteCommand => {
-                    // Execute current command
-                    if client.command_index >= commands.len() {
-                        // All commands executed, end transaction
-                        client.state = ConnectionState::EndTransaction;
-                        continue;
-                    }
-
-                    let command = &commands[client.command_index];
-
-                    // Execute command asynchronously
-                    match ScriptExecutor::execute(command, client).await {
-                        Ok(_) => {
-                            // Command executed successfully, move to next
-                            client.command_index += 1;
-                        }
-                        Err(e) => {
-                            // Command failed - log detailed error
-                            log::error!(
-                                "Client {} command {} failed: {:?}",
-                                client.id,
-                                client.command_index,
-                                command
-                            );
-                            log::error!("Client {} error details: {:#?}", client.id, e);
-
-                            // TODO: Check if error is retryable (serialization, deadlock)
-                            // For now, just abort the transaction
-                            client.state = ConnectionState::Aborted;
-                            thread_state.stats.record_failed(false, false);
-                        }
-                    }
-                }
-
-                ConnectionState::Sleep => {
-                    // Check if sleep time has elapsed
-                    if !client.should_sleep() {
-                        client.sleep_until = None;
-                        client.state = ConnectionState::ExecuteCommand;
-                    }
-                }
-
-                ConnectionState::Throttle => {
-                    // TODO: Implement throttling logic (--rate flag)
-                    // For now, just move to next state
-                    client.state = ConnectionState::ExecuteCommand;
-                }
-
-                ConnectionState::EndTransaction => {
-                    // Transaction completed successfully
-                    if let Some(latency_us) = client.end_transaction() {
-                        thread_state.stats.record_transaction(latency_us);
-                        client.transaction_count += 1;
-
-                        log::trace!(
-                            "Client {} completed transaction {} in {} μs",
-                            client.id,
-                            client.transaction_count,
-                            latency_us
-                        );
-                    }
-
-                    // Reset for next transaction
-                    client.state = ConnectionState::ChooseScript;
-                    client.tries = 0;
-                }
-
-                ConnectionState::Aborted => {
-                    // Transaction aborted, need to ROLLBACK to release locks
-                    log::debug!("Client {} transaction aborted, issuing ROLLBACK", client.id);
-
-                    // Issue ROLLBACK to clean up the failed transaction (async)
-                    if let Err(e) = client.executor.execute("ROLLBACK;").await {
-                        log::error!("Client {} failed to ROLLBACK: {}", client.id, e);
-                    }
-
-                    // Reset for next transaction
-                    client.state = ConnectionState::ChooseScript;
-                    client.tries = 0;
-                    client.txn_begin = None;
-                }
-
-                ConnectionState::Finished => {
-                    // Client is done (shouldn't reach here due to continue above)
-                    continue;
-                }
-            }
-        }
-
-        // Small sleep to avoid busy-waiting
-        // TODO: Make this more efficient with proper event handling
-        std::thread::sleep(Duration::from_micros(100));
+        client_tasks.push(task);
     }
+
+    // Wait for all client tasks to complete
+    let mut results = Vec::new();
+    for task in client_tasks {
+        match task.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                log::error!("Client task failed: {}", e);
+                return Err(PgBenchError::ConnectionError(format!("Client task panicked: {}", e)));
+            }
+        }
+    }
+
+    // Reconstruct thread_state with completed clients
+    for result in results {
+        match result {
+            Ok(client) => thread_state.add_client(client),
+            Err(e) => {
+                log::error!("Client execution failed: {}", e);
+                // Continue with other clients
+            }
+        }
+    }
+
+    // Old sequential loop removed - clients now run concurrently in separate tasks
 
     log::info!(
         "Thread {} completed: {} total transactions",
