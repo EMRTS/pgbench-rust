@@ -85,8 +85,16 @@ async fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
     })?;
     info!("Query mode: {}", query_mode.as_str());
 
-    // Create benchmark configuration
-    let mut config = BenchmarkConfig::new(args.scale as i64);
+    // Detect the actual scale factor from the database
+    // This is critical for accurate benchmarking!
+    let mut temp_conn = db::connection::PgBenchConnection::connect(&args.connection).await?;
+    let actual_scale = db::detect_scale_factor(&mut temp_conn).await?;
+    drop(temp_conn); // Close temporary connection
+
+    info!("Detected scale factor: {} (from database)", actual_scale);
+
+    // Create benchmark configuration with actual scale factor
+    let mut config = BenchmarkConfig::new(actual_scale);
 
     if let Some(transactions) = args.transactions {
         config = config.with_transactions(transactions);
@@ -154,7 +162,7 @@ async fn run_benchmark_mode(args: &cli::Args) -> PgBenchResult<()> {
             args.clients,
             args.jobs,
             benchmark_duration,
-            args.scale as i64,
+            actual_scale,
             query_mode.as_str(),
             &script_name,
         );

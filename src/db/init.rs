@@ -64,6 +64,39 @@ pub async fn initialize_database(args: &Args, conn: &mut PgBenchConnection) -> P
     Ok(())
 }
 
+/// Detect the scale factor from an existing database
+///
+/// Counts the number of rows in pgbench_branches since there is 1 branch per scale unit.
+/// Returns 1 if the table doesn't exist or is empty.
+///
+/// Reference: This is what the original pgbench does implicitly
+pub async fn detect_scale_factor(conn: &mut PgBenchConnection) -> PgBenchResult<i64> {
+    // Try to count branches
+    let query = "SELECT COUNT(*) FROM pgbench_branches";
+
+    match conn.query(query, &[]).await {
+        Ok(rows) => {
+            if let Some(row) = rows.first() {
+                if let Ok(count) = row.try_get::<_, i64>(0) {
+                    // If we got a count, that's our scale factor (1 branch per scale unit)
+                    if count > 0 {
+                        log::debug!("Detected scale factor {} from {} branches", count, count);
+                        return Ok(count);
+                    }
+                }
+            }
+            // Table exists but is empty - return scale 1
+            log::warn!("pgbench_branches table is empty, assuming scale factor 1");
+            Ok(1)
+        }
+        Err(_) => {
+            // Table doesn't exist - return scale 1
+            log::warn!("pgbench_branches table not found, assuming scale factor 1");
+            Ok(1)
+        }
+    }
+}
+
 /// Initialization steps
 /// Reference: pgbench.c initSteps
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
