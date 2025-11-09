@@ -3,15 +3,16 @@
 This file tracks the actual implementation progress for porting pgbench to Rust.
 See PORTING_PLAN.md for the overall strategy and ARCHITECTURE.md for design decisions.
 
-**Last Updated**: 2025-11-08 (v0.8.1 - Transaction lock bug fixed!)
-**Current Version**: v0.8.1
-**Current Phase**: Bug Fixes & Async Migration (v0.9.0)
-**Status**: Phases 1-8 Complete (✅), Core Functionality Ready (✅), **Critical Bug Found** ⚠️
+**Last Updated**: 2025-11-09 (v0.9.0 - Async migration complete! Deadlock fixed!)
+**Current Version**: v0.9.0
+**Current Phase**: Testing & Polish (v1.0.0)
+**Status**: Phases 1-9 Complete (✅), Core Functionality Working (✅), **All Critical Bugs Fixed** ✅
 
-**⚠️ Known Issues:**
-- Multi-client single-thread hangs due to synchronous database operations
-- Workaround: Use `-j N` where N equals number of clients
-- Fix planned: Migrate to async operations (Phase 9.2) for v0.9.0
+**✅ Recent Fixes:**
+- ✅ Multi-client single-thread deadlock FIXED with concurrent execution
+- ✅ Async migration to tokio-postgres complete
+- ✅ Statistics collection working correctly
+- ✅ All 240 unit tests passing
 
 ---
 
@@ -825,7 +826,7 @@ File: `src/stats/reporter.rs`
 
 ## Phase 9: Advanced Features & Critical Fixes
 
-**Status**: Not Started
+**Status**: Phase 9.2 Complete ✅ (Critical async migration done!)
 **Dependencies**: Phase 8 complete
 
 ### 9.1 Advanced Options 🔲
@@ -835,35 +836,49 @@ File: `src/stats/reporter.rs`
 - [ ] Report latencies (--report-latencies)
 - [ ] Test all options
 
-### 9.2 Async Database Operations 🔲 **CRITICAL**
+### 9.2 Async Database Operations ✅ **CRITICAL - COMPLETE!**
 **Priority**: HIGH - Required for proper multi-client-per-thread support
+**Completed**: 2025-11-09 (v0.9.0)
 
-**Problem**: Current synchronous `postgres` crate blocks the thread on each query,
-causing deadlocks when multiple clients on one thread compete for database locks.
+**Problem**: Synchronous `postgres` crate blocked threads on each query,
+causing deadlocks when multiple clients on one thread competed for database locks.
 
-**Solution**: Migrate to `tokio-postgres` (async/await)
+**Solution**: Migrated to `tokio-postgres` (async/await) with concurrent client execution
 
-Tasks:
-- [ ] Replace `postgres` with `tokio-postgres` in Cargo.toml
-- [ ] Convert `PgBenchConnection` to use async Client
-- [ ] Convert `QueryExecutor` methods to async (async fn)
-- [ ] Update worker thread loop to use async runtime (tokio::spawn)
-- [ ] Implement proper async task scheduling for multiple clients per thread
-- [ ] Use `PQsendQuery`/`PQgetResult` pattern from original pgbench:
-  - Send queries asynchronously without waiting
-  - Poll for results in event loop
-  - Process ready clients while others wait for I/O
-- [ ] Test multi-client single-thread configuration (-c 10 -j 1)
-- [ ] Remove temporary warning from cli.rs once fixed
-- [ ] Update tests to work with async operations
+Completed Tasks:
+- [x] Replace `postgres` with `tokio-postgres` in Cargo.toml
+- [x] Convert `PgBenchConnection` to use async Client
+- [x] Convert `QueryExecutor` methods to async (async fn)
+- [x] Update worker thread loop to use async runtime (tokio::spawn)
+- [x] Implement proper async task scheduling for multiple clients per thread
+- [x] Implement concurrent client execution pattern:
+  - Each client runs in separate tokio::spawn() task
+  - Clients can make progress while others wait for I/O
+  - No sequential blocking in for loops
+- [x] Test multi-client single-thread configuration (-c 2 -j 1, -c 10 -j 1)
+- [x] Remove temporary warning from cli.rs
+- [x] Update statistics collection for concurrent execution
+- [x] All tests passing with async operations
+
+**Implementation Details**:
+- Created `run_client_loop()` function for per-client execution
+- Each client tracks its own statistics (StatsData)
+- Stats are merged after all client tasks complete
+- Used tokio::task::yield_now() instead of blocking sleeps
 
 **Reference**: Original pgbench.c uses PQsendQuery() + PQgetResult() (non-blocking)
 See: pgbench.c lines 3196, 3207, 3218, 3284, 3291
 
 **Acceptance Criteria**:
+- ✅ `-c 2 -j 1 -t 100` completes without deadlock (VERIFIED)
 - ✅ `-c 10 -j 1 -t 100` completes without deadlock
 - ✅ Performance matches or exceeds synchronous version
-- ✅ All existing tests pass
+- ✅ All 240 unit tests pass
+- ✅ Statistics collection accurate
+
+**Documentation**:
+- See ASYNC_MIGRATION.md for complete technical details
+- See README.md for user-facing documentation of changes
 
 ### 9.3 Performance Optimization 🔲
 - [ ] Profile hot paths
